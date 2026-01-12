@@ -21,24 +21,24 @@ import (
 
 // RPCRequest represents a JSON-RPC request structure
 type RPCRequest struct {
-	Jsonrpc string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
+	Jsonrpc string           `json:"jsonrpc"`
+	ID      *json.RawMessage `json:"id,omitempty"`
+	Method  string           `json:"method"`
+	Params  json.RawMessage  `json:"params,omitempty"`
 }
 
 // RPCSuccessResponse represents a successful JSON-RPC response structure
 type RPCSuccessResponse struct {
-	Jsonrpc string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Result  any             `json:"result"`
+	Jsonrpc string           `json:"jsonrpc"`
+	ID      *json.RawMessage `json:"id"`
+	Result  any              `json:"result"`
 }
 
 // RPCErrorResponse represents an error JSON-RPC response structure
 type RPCErrorResponse struct {
-	Jsonrpc string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Error   *RPCError       `json:"error"`
+	Jsonrpc string           `json:"jsonrpc"`
+	ID      *json.RawMessage `json:"id"`
+	Error   *RPCError        `json:"error"`
 }
 
 // RPCError represents a JSON-RPC error object
@@ -317,7 +317,7 @@ func main() {
 
 		mockReq := RPCRequest{
 			Jsonrpc: "2.0",
-			ID:      mockID,
+			ID:      &mockID,
 			Method:  "initialize",
 			Params:  mockParamsBytes,
 		}
@@ -391,6 +391,9 @@ func readMessage(reader *bufio.Reader) (RPCRequest, error) {
 	if err != nil {
 		return RPCRequest{}, fmt.Errorf("invalid JSON-RPC request: %v", err)
 	}
+	if isInvalidID(req.ID) {
+		return RPCRequest{}, fmt.Errorf("id must be a string or integer")
+	}
 
 	return req, nil
 }
@@ -435,26 +438,16 @@ Options:
 `, os.Args[0])
 }
 
-// checkInitializedOrFail ensures that the server has been successfully initialized.
-func checkInitializedOrFail(id json.RawMessage, server *Server, method string) bool {
+// handleRequest routes JSON-RPC messages to appropriate handlers
+func handleRequest(server *Server, req RPCRequest) {
 	// The following methods are allowed even if not initialized:
 	// - initialize (the first request)
 	// - shutdown and exit (for cleanup)
-	if method == "initialize" || method == "shutdown" || method == "exit" {
-		return true
-	}
-
-	if !server.initialized {
-		sendError(id, -32002, "Server not initialized", "Received request before successful initialization")
-		return false
-	}
-	return true
-}
-
-// handleRequest routes JSON-RPC requests to appropriate handlers
-func handleRequest(server *Server, req RPCRequest) {
-	if !checkInitializedOrFail(req.ID, server, req.Method) {
-		// Server not initialized and request is not allowed.
+	if !server.initialized && req.Method != "initialize" && req.Method != "shutdown" && req.Method != "exit" {
+		if isNotification(req) {
+			return
+		}
+		sendError(req.ID, -32002, "Server not initialized", "Received request before successful initialization")
 		return
 	}
 
@@ -462,7 +455,6 @@ func handleRequest(server *Server, req RPCRequest) {
 	case "initialize":
 		handleInitialize(server, req)
 	case "initialized":
-		handleInitialized(server, req)
 	case "shutdown":
 		handleShutdown(server, req)
 	case "exit":
@@ -484,16 +476,37 @@ func handleRequest(server *Server, req RPCRequest) {
 	case "textDocument/documentSymbol":
 		handleDocumentSymbol(server, req)
 	case "$/cancelRequest":
-		handleCancelRequest(server, req)
 	case "$/setTrace":
-		handleSetTrace(server, req)
 	case "$/logTrace":
-		handleLogTrace(server, req)
 	default:
-		// Method not found
+		if isNotification(req) {
+			return
+		}
 		message := fmt.Sprintf("Method not found: %s", req.Method)
 		sendError(req.ID, -32601, message, nil)
 	}
+}
+
+func isNotification(req RPCRequest) bool {
+	return req.ID == nil
+}
+
+func isInvalidID(id *json.RawMessage) bool {
+	if id == nil {
+		return false
+	}
+
+	var s string
+	if json.Unmarshal(*id, &s) == nil {
+		return false
+	}
+
+	var n int64
+	if json.Unmarshal(*id, &n) == nil {
+		return false
+	}
+
+	return true
 }
 
 // handleInitialize processes the 'initialize' request
@@ -553,11 +566,6 @@ func handleInitialize(server *Server, req RPCRequest) {
 	server.initialized = true
 }
 
-// handleInitialized processes the 'initialized' notification
-func handleInitialized(_ *Server, _ RPCRequest) {
-	// 'initialized' is a notification with no response
-}
-
 // handleShutdown processes the 'shutdown' request
 func handleShutdown(_ *Server, req RPCRequest) {
 	sendResult(req.ID, nil)
@@ -566,25 +574,6 @@ func handleShutdown(_ *Server, req RPCRequest) {
 // handleExit processes the 'exit' notification
 func handleExit(_ *Server, _ RPCRequest) {
 	os.Exit(0)
-}
-
-// handleCancelRequest processes the '$/cancelRequest' notification
-// (For canceling in-progress requests)
-func handleCancelRequest(_ *Server, _ RPCRequest) {
-	// Not currently in use
-}
-
-// handleSetTrace() processes the '$/setTrace' notification
-// (Controls trace output level)
-func handleSetTrace(_ *Server, req RPCRequest) {
-	// Not currently in use
-	sendResult(req.ID, nil)
-}
-
-// handleLogTrace() processes the '$/logTrace' notification
-// (For transmitting trace data)
-func handleLogTrace(_ *Server, _ RPCRequest) {
-	// Not currently in use
 }
 
 // handleDidOpen processes the 'textDocument/didOpen' notification
@@ -996,7 +985,7 @@ func findSymbolRangeInFile(lines []string, symbolName string, lineNumber int) Ra
 }
 
 // sendResult sends a successful JSON-RPC response
-func sendResult(id json.RawMessage, result any) {
+func sendResult(id *json.RawMessage, result any) {
 	response := RPCSuccessResponse{
 		Jsonrpc: "2.0",
 		ID:      id,
@@ -1006,7 +995,7 @@ func sendResult(id json.RawMessage, result any) {
 }
 
 // sendError sends an error JSON-RPC response
-func sendError(id json.RawMessage, code int, message string, data any) {
+func sendError(id *json.RawMessage, code int, message string, data any) {
 	response := RPCErrorResponse{
 		Jsonrpc: "2.0",
 		ID:      id,
