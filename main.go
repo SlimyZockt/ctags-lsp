@@ -698,11 +698,16 @@ func handleCompletion(server *Server, req RPCRequest) {
 	// Retrieve the current word at the cursor position
 	word, err := server.getCurrentWord(filePath, params.Position)
 	if err != nil {
-		sendResult(req.ID, CompletionList{
-			IsIncomplete: false,
-			Items:        []CompletionItem{},
-		})
-		return
+		if isAfterDot {
+			// Allow empty prefix after '.' so method/function suggestions still appear.
+			word = ""
+		} else {
+			sendResult(req.ID, CompletionList{
+				IsIncomplete: false,
+				Items:        []CompletionItem{},
+			})
+			return
+		}
 	}
 
 	var items []CompletionItem
