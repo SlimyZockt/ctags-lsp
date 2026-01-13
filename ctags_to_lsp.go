@@ -1,10 +1,8 @@
-// kind_map defines the mapping tables and helpers that translate ctags kind strings
-// into the LSP completion and symbol kinds used by the server.
 package main
 
 import "fmt"
 
-// LSP Completion Item Kind Constants
+// LSP Completion Item Kind Constants.
 const (
 	CompletionItemKindText          = 1
 	CompletionItemKindMethod        = 2
@@ -33,7 +31,7 @@ const (
 	CompletionItemKindTypeParameter = 25
 )
 
-// LSP Symbol Kind Constants
+// LSP Symbol Kind Constants.
 const (
 	SymbolKindFile          = 1
 	SymbolKindModule        = 2
@@ -63,7 +61,7 @@ const (
 	SymbolKindTypeParameter = 26
 )
 
-// completionKindByTagKind defines the mapping from ctags kinds to LSP completion item kinds
+// completionKindByTagKind defines the mapping from ctags kinds to LSP completion item kinds.
 var completionKindByTagKind = map[string]int{
 	"alias":            CompletionItemKindVariable,
 	"arg":              CompletionItemKindVariable,
@@ -247,7 +245,7 @@ var completionKindByTagKind = map[string]int{
 	"xtask":            CompletionItemKindVariable,
 }
 
-// symbolKindByTagKind defines the mapping from ctags kinds to LSP symbol kinds
+// symbolKindByTagKind defines the mapping from ctags kinds to LSP symbol kinds.
 var symbolKindByTagKind = map[string]int{
 	"alias":            SymbolKindVariable,
 	"arg":              SymbolKindVariable,
@@ -410,15 +408,15 @@ var symbolKindByTagKind = map[string]int{
 	"xtask":            SymbolKindVariable,
 }
 
-// GetLSPCompletionKind retrieves the corresponding LSP completion item kind for a given ctags kind string
+// GetLSPCompletionKind retrieves the corresponding LSP completion item kind for a given ctags kind string.
 func GetLSPCompletionKind(ctagsKind string) int {
 	if kind, ok := completionKindByTagKind[ctagsKind]; ok {
 		return kind
 	}
-	return CompletionItemKindText // Default to Text if no match is found
+	return CompletionItemKindText
 }
 
-// GetLSPSymbolKind retrieves the corresponding LSP symbol kind for a given ctags kind string
+// GetLSPSymbolKind retrieves the corresponding LSP symbol kind for a given ctags kind string.
 func GetLSPSymbolKind(ctagsKind string) (int, error) {
 	if kind, ok := symbolKindByTagKind[ctagsKind]; ok {
 		return kind, nil

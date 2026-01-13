@@ -1,11 +1,10 @@
-// tagfile_parser parses ctags tagfiles into TagEntry records, including kind resolution
-// and path normalization so tagfile entries match the JSON ctags output shape.
 package main
 
 import (
 	"bufio"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -58,6 +57,24 @@ func (kindMap *tagfileKindMap) resolve(language, letter string) (string, bool) {
 // isKindName reports whether a kind name exists in the tagfile metadata.
 func (kindMap *tagfileKindMap) isKindName(kind string) bool {
 	return kindMap.kindNames[kind]
+}
+
+// findTagsFile checks for existing tags files and returns the first one found.
+func findTagsFile(root string) (string, bool) {
+	tagsLocations := []string{
+		"tags",
+		".tags",
+		".git/tags",
+	}
+
+	for _, location := range tagsLocations {
+		tagsPath := filepath.Join(root, location)
+		if _, err := os.Stat(tagsPath); err == nil {
+			return tagsPath, true
+		}
+	}
+
+	return "", false
 }
 
 // parseTagfile reads a ctags tagfile and returns entries in the same shape as processTagsOutput.
@@ -212,4 +229,19 @@ func resolveTagfileKind(kindField string, entry *TagEntry, kindMap *tagfileKindM
 		return mapped
 	}
 	return kindField
+}
+
+// tagfilePathToRootRelative takes a path from a tags file, interprets it relative to the tagfile directory if needed,
+// and returns it as a root-relative path.
+func tagfilePathToRootRelative(rootPath, tagsPath, raw string) (string, error) {
+	if after, ok := strings.CutPrefix(raw, "file://"); ok {
+		raw = filepath.FromSlash(after)
+	}
+
+	clean := filepath.Clean(raw)
+	if !filepath.IsAbs(clean) {
+		clean = filepath.Clean(filepath.Join(filepath.Dir(tagsPath), clean))
+	}
+
+	return toRootRelativePath(rootPath, clean)
 }
