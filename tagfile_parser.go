@@ -26,38 +26,38 @@ func newTagfileKindMap() *tagfileKindMap {
 }
 
 // add stores a kind letter mapping for a language and tracks the kind name.
-func (m *tagfileKindMap) add(language, letter, kind string) {
+func (kindMap *tagfileKindMap) add(language, letter, kind string) {
 	if language == "" {
 		language = "default"
 	}
-	if _, ok := m.byLanguage[language]; !ok {
-		m.byLanguage[language] = make(map[string]string)
+	if _, ok := kindMap.byLanguage[language]; !ok {
+		kindMap.byLanguage[language] = make(map[string]string)
 	}
-	m.byLanguage[language][letter] = kind
-	if _, ok := m.any[letter]; !ok {
-		m.any[letter] = kind
+	kindMap.byLanguage[language][letter] = kind
+	if _, ok := kindMap.any[letter]; !ok {
+		kindMap.any[letter] = kind
 	}
-	m.kindNames[kind] = true
+	kindMap.kindNames[kind] = true
 }
 
 // resolve returns the kind name for a kind letter using language-specific or default mappings.
-func (m *tagfileKindMap) resolve(language, letter string) (string, bool) {
+func (kindMap *tagfileKindMap) resolve(language, letter string) (string, bool) {
 	if language != "" {
-		if byLang, ok := m.byLanguage[language]; ok {
+		if byLang, ok := kindMap.byLanguage[language]; ok {
 			if kind, ok := byLang[letter]; ok {
 				return kind, true
 			}
 		}
 	}
-	if kind, ok := m.any[letter]; ok {
+	if kind, ok := kindMap.any[letter]; ok {
 		return kind, true
 	}
 	return "", false
 }
 
 // isKindName reports whether a kind name exists in the tagfile metadata.
-func (m *tagfileKindMap) isKindName(kind string) bool {
-	return m.kindNames[kind]
+func (kindMap *tagfileKindMap) isKindName(kind string) bool {
+	return kindMap.kindNames[kind]
 }
 
 // parseTagfile reads a ctags tagfile and returns entries in the same shape as processTagsOutput.
@@ -143,13 +143,13 @@ func parseTagfileEntry(line, tagsPath, rootPath string, kindMap *tagfileKindMap)
 	}
 
 	kindField := ""
-	next := 3
+	nextFieldIndex := 3
 	if len(fields) > 3 && !strings.Contains(fields[3], ":") {
 		kindField = fields[3]
-		next = 4
+		nextFieldIndex = 4
 	}
 
-	for _, field := range fields[next:] {
+	for _, field := range fields[nextFieldIndex:] {
 		if field == "" {
 			continue
 		}

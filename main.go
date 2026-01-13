@@ -209,21 +209,21 @@ type Server struct {
 	ctagsBin    string
 	tagfilePath string
 	languages   string
-	out         io.Writer
-	mu          sync.Mutex
+	output      io.Writer
+	mutex       sync.Mutex
 }
 
 // FileCache stores the content of opened files for quick access
 type FileCache struct {
-	mu      sync.RWMutex
+	mutex   sync.RWMutex
 	content map[string][]string
 }
 
 // GetOrLoadFileContent retrieves file content from cache or loads it from disk if not present
-func (fc *FileCache) GetOrLoadFileContent(filePath string) ([]string, error) {
-	fc.mu.RLock()
-	content, ok := fc.content[filePath]
-	fc.mu.RUnlock()
+func (cache *FileCache) GetOrLoadFileContent(filePath string) ([]string, error) {
+	cache.mutex.RLock()
+	content, ok := cache.content[filePath]
+	cache.mutex.RUnlock()
 	if ok {
 		return content, nil
 	}
@@ -233,9 +233,9 @@ func (fc *FileCache) GetOrLoadFileContent(filePath string) ([]string, error) {
 		return nil, err
 	}
 	// Store content in cache
-	fc.mu.Lock()
-	fc.content[filePath] = lines
-	fc.mu.Unlock()
+	cache.mutex.Lock()
+	cache.content[filePath] = lines
+	cache.mutex.Unlock()
 	return lines, nil
 }
 
@@ -319,7 +319,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, checkCtags fu
 		ctagsBin:    config.ctagsBin,
 		tagfilePath: config.tagfilePath,
 		languages:   config.languages,
-		out:         stdout,
+		output:      stdout,
 	}
 
 	if config.benchmark {
@@ -433,13 +433,13 @@ type Config struct {
 	languages   string
 }
 
-func parseFlags(args []string, out io.Writer) (*Config, error) {
+func parseFlags(args []string, output io.Writer) (*Config, error) {
 	config := &Config{}
 
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	fs.SetOutput(out)
+	fs.SetOutput(output)
 	fs.Usage = func() {
-		flagUsage(out, args[0])
+		flagUsage(output, args[0])
 	}
 	fs.BoolVar(&config.showVersion, "version", false, "")
 	fs.BoolVar(&config.benchmark, "benchmark", false, "")
@@ -625,9 +625,9 @@ func handleDidOpen(server *Server, req RPCRequest) {
 	content := strings.Split(params.TextDocument.Text, "\n")
 
 	// Cache the opened document's content
-	server.cache.mu.Lock()
+	server.cache.mutex.Lock()
 	server.cache.content[filePath] = content
-	server.cache.mu.Unlock()
+	server.cache.mutex.Unlock()
 }
 
 // handleDidChange processes the 'textDocument/didChange' notification
@@ -647,9 +647,9 @@ func handleDidChange(server *Server, req RPCRequest) {
 	if len(params.ContentChanges) > 0 {
 		content := strings.Split(params.ContentChanges[0].Text, "\n")
 		// Update the cached content
-		server.cache.mu.Lock()
+		server.cache.mutex.Lock()
 		server.cache.content[filePath] = content
-		server.cache.mu.Unlock()
+		server.cache.mutex.Unlock()
 	}
 }
 
@@ -668,9 +668,9 @@ func handleDidClose(server *Server, req RPCRequest) {
 	}
 
 	// Remove the document from cache
-	server.cache.mu.Lock()
+	server.cache.mutex.Lock()
 	delete(server.cache.content, filePath)
-	server.cache.mu.Unlock()
+	server.cache.mutex.Unlock()
 }
 
 // handleDidSave processes the 'textDocument/didSave' notification
@@ -710,9 +710,9 @@ func handleCompletion(server *Server, req RPCRequest) {
 	currentFileExt := filepath.Ext(filePath)
 
 	// Get the line content and check if the character before the cursor is a dot
-	server.cache.mu.RLock()
+	server.cache.mutex.RLock()
 	lines, ok := server.cache.content[filePath]
-	server.cache.mu.RUnlock()
+	server.cache.mutex.RUnlock()
 
 	if !ok || params.Position.Line >= len(lines) {
 		server.sendError(req.ID, -32603, "Internal error", "Line out of range")
@@ -822,8 +822,8 @@ func handleDefinition(server *Server, req RPCRequest) {
 	}
 
 	// Search for the symbol in the tagEntries
-	server.mu.Lock()
-	defer server.mu.Unlock()
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
 
 	var locations []Location
 	for _, entry := range server.tagEntries {
@@ -875,8 +875,8 @@ func handleWorkspaceSymbol(server *Server, req RPCRequest) {
 	query := params.Query
 	var symbols []SymbolInformation
 
-	server.mu.Lock()
-	defer server.mu.Unlock()
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
 
 	for _, entry := range server.tagEntries {
 		if query != "" && entry.Name != query {
@@ -934,8 +934,8 @@ func handleDocumentSymbol(server *Server, req RPCRequest) {
 		return
 	}
 
-	server.mu.Lock()
-	defer server.mu.Unlock()
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
 
 	var symbols []SymbolInformation
 
@@ -1022,17 +1022,17 @@ func findSymbolRangeInFile(lines []string, symbolName string, lineNumber int) Ra
 }
 
 // sendResult sends a successful JSON-RPC response
-func (s *Server) sendResult(id *json.RawMessage, result any) {
+func (server *Server) sendResult(id *json.RawMessage, result any) {
 	response := RPCSuccessResponse{
 		Jsonrpc: "2.0",
 		ID:      id,
 		Result:  result,
 	}
-	s.sendResponse(response)
+	server.sendResponse(response)
 }
 
 // sendError sends an error JSON-RPC response
-func (s *Server) sendError(id *json.RawMessage, code int, message string, data any) {
+func (server *Server) sendError(id *json.RawMessage, code int, message string, data any) {
 	response := RPCErrorResponse{
 		Jsonrpc: "2.0",
 		ID:      id,
@@ -1042,11 +1042,11 @@ func (s *Server) sendError(id *json.RawMessage, code int, message string, data a
 			Data:    data,
 		},
 	}
-	s.sendResponse(response)
+	server.sendResponse(response)
 }
 
 // sendResponse marshals and sends the JSON-RPC response with appropriate headers
-func (s *Server) sendResponse(resp any) {
+func (server *Server) sendResponse(resp any) {
 	body, err := json.Marshal(resp)
 	if err != nil {
 		log.Printf("Error marshaling response: %v", err)
@@ -1054,7 +1054,7 @@ func (s *Server) sendResponse(resp any) {
 	}
 
 	// Write headers followed by the JSON body
-	writer := s.out
+	writer := server.output
 	if writer == nil {
 		writer = os.Stdout
 	}
@@ -1112,49 +1112,49 @@ func relativePathToAbsoluteURI(rootPath, rel string) (string, error) {
 	return "file://" + filepath.ToSlash(absPath), nil
 }
 
-func (s *Server) ctagsArgs(extra ...string) []string {
+func (server *Server) ctagsArgs(extra ...string) []string {
 	args := []string{"--output-format=json", "--fields=+n"}
-	if s.languages != "" {
-		args = append(args, "--languages="+s.languages)
+	if server.languages != "" {
+		args = append(args, "--languages="+server.languages)
 	}
 	return append(args, extra...)
 }
 
 // scanWorkspace runs ctags on the workspace using parallel chunks for performance.
-func (s *Server) scanWorkspace() error {
-	if s.tagfilePath != "" {
-		tagsPath := s.tagfilePath
+func (server *Server) scanWorkspace() error {
+	if server.tagfilePath != "" {
+		tagsPath := server.tagfilePath
 		if !filepath.IsAbs(tagsPath) {
-			tagsPath = filepath.Join(s.rootPath, tagsPath)
+			tagsPath = filepath.Join(server.rootPath, tagsPath)
 		}
 		tagsPath = filepath.Clean(tagsPath)
 		if _, err := os.Stat(tagsPath); err != nil {
 			return fmt.Errorf("tagfile not found at %q: %v", tagsPath, err)
 		}
-		entries, err := parseTagfile(tagsPath, s.rootPath)
+		entries, err := parseTagfile(tagsPath, server.rootPath)
 		if err != nil {
 			return err
 		}
 
-		s.mu.Lock()
-		s.tagEntries = append(s.tagEntries, entries...)
-		s.mu.Unlock()
+		server.mutex.Lock()
+		server.tagEntries = append(server.tagEntries, entries...)
+		server.mutex.Unlock()
 		return nil
 	}
 
-	if tagsPath, found := findTagsFile(s.rootPath); found {
-		entries, err := parseTagfile(tagsPath, s.rootPath)
+	if tagsPath, found := findTagsFile(server.rootPath); found {
+		entries, err := parseTagfile(tagsPath, server.rootPath)
 		if err != nil {
 			return err
 		}
 
-		s.mu.Lock()
-		s.tagEntries = append(s.tagEntries, entries...)
-		s.mu.Unlock()
+		server.mutex.Lock()
+		server.tagEntries = append(server.tagEntries, entries...)
+		server.mutex.Unlock()
 		return nil
 	}
 
-	files, err := listWorkspaceFiles(s.rootPath)
+	files, err := listWorkspaceFiles(server.rootPath)
 	if err != nil {
 		return err
 	}
@@ -1177,11 +1177,11 @@ func (s *Server) scanWorkspace() error {
 			defer wg.Done()
 
 			// run ctags with input from chunk
-			cmd := exec.Command(s.ctagsBin, s.ctagsArgs("-L", "-")...)
-			cmd.Dir = s.rootPath
+			cmd := exec.Command(server.ctagsBin, server.ctagsArgs("-L", "-")...)
+			cmd.Dir = server.rootPath
 			cmd.Stdin = strings.NewReader(strings.Join(chunk, "\n"))
 
-			if err := s.processTagsOutput(cmd); err != nil {
+			if err := server.processTagsOutput(cmd); err != nil {
 				log.Printf("ctags error: %v", err)
 			}
 		}(chunk)
@@ -1195,21 +1195,21 @@ func (s *Server) scanWorkspace() error {
 func listWorkspaceFiles(root string) ([]string, error) {
 	// check git repo
 	if isGitRepo(root) {
-		out, err := exec.Command("git", "-C", root, "ls-files").Output()
+		output, err := exec.Command("git", "-C", root, "ls-files").Output()
 		if err != nil {
 			return nil, err
 		}
-		files := strings.Split(strings.TrimSpace(string(out)), "\n")
+		files := strings.Split(strings.TrimSpace(string(output)), "\n")
 		return workspacePathsToRootRelative(root, files)
 	}
 
 	// check jujutsu repo
 	if isJjRepo(root) {
-		out, err := exec.Command("jj", "file", "list", "--repository", root).Output()
+		output, err := exec.Command("jj", "file", "list", "--repository", root).Output()
 		if err != nil {
 			return nil, err
 		}
-		files := strings.Split(strings.TrimSpace(string(out)), "\n")
+		files := strings.Split(strings.TrimSpace(string(output)), "\n")
 		return workspacePathsToRootRelative(root, files)
 	}
 
@@ -1229,15 +1229,15 @@ func listWorkspaceFiles(root string) ([]string, error) {
 // workspacePathsToRootRelative converts general workspace paths to root-relative form.
 // Used only by listWorkspaceFiles for non-tagfile sources.
 func workspacePathsToRootRelative(rootPath string, paths []string) ([]string, error) {
-	out := make([]string, 0, len(paths))
+	relativePaths := make([]string, 0, len(paths))
 	for _, path := range paths {
 		rel, err := toRootRelativePath(rootPath, path)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, rel)
+		relativePaths = append(relativePaths, rel)
 	}
-	return out, nil
+	return relativePaths, nil
 }
 
 // findTagsFile checks for existing tags files and returns the first one found
@@ -1272,29 +1272,29 @@ func isJjRepo(path string) bool {
 }
 
 // scanSingleFileTag scans a single file, removing previous entries for that file
-func (s *Server) scanSingleFileTag(filePath string) error {
+func (server *Server) scanSingleFileTag(filePath string) error {
 	if strings.HasPrefix(filePath, "..") {
 		return fmt.Errorf("path outside root: %s", filePath)
 	}
 
-	s.mu.Lock()
+	server.mutex.Lock()
 	// Remove previous entries for that file
-	newEntries := make([]TagEntry, 0, len(s.tagEntries))
-	for _, entry := range s.tagEntries {
+	newEntries := make([]TagEntry, 0, len(server.tagEntries))
+	for _, entry := range server.tagEntries {
 		if entry.Path != filePath {
 			newEntries = append(newEntries, entry)
 		}
 	}
-	s.tagEntries = newEntries
-	s.mu.Unlock()
+	server.tagEntries = newEntries
+	server.mutex.Unlock()
 
-	cmd := exec.Command(s.ctagsBin, s.ctagsArgs(filePath)...)
-	cmd.Dir = s.rootPath
-	return s.processTagsOutput(cmd)
+	cmd := exec.Command(server.ctagsBin, server.ctagsArgs(filePath)...)
+	cmd.Dir = server.rootPath
+	return server.processTagsOutput(cmd)
 }
 
 // processTagsOutput handles the ctags command execution and output processing
-func (s *Server) processTagsOutput(cmd *exec.Cmd) error {
+func (server *Server) processTagsOutput(cmd *exec.Cmd) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("failed to get stdout from ctags command: %v", err)
@@ -1314,7 +1314,7 @@ func (s *Server) processTagsOutput(cmd *exec.Cmd) error {
 		}
 
 		// Normalize the Path to be relative to rootPath
-		relPath, err := toRootRelativePath(s.rootPath, entry.Path)
+		relPath, err := toRootRelativePath(server.rootPath, entry.Path)
 		if err != nil {
 			log.Printf("Failed to make path relative for %s: %v", entry.Path, err)
 			continue
@@ -1332,17 +1332,17 @@ func (s *Server) processTagsOutput(cmd *exec.Cmd) error {
 		return fmt.Errorf("ctags command failed: %v", err)
 	}
 
-	s.mu.Lock()
-	s.tagEntries = append(s.tagEntries, entries...)
-	s.mu.Unlock()
+	server.mutex.Lock()
+	server.tagEntries = append(server.tagEntries, entries...)
+	server.mutex.Unlock()
 
 	return nil
 }
 
 // getCurrentWord retrieves the current word at the given position in the document
 // using a root-relative file path.
-func (s *Server) getCurrentWord(filePath string, pos Position) (string, error) {
-	lines, err := s.cache.GetOrLoadFileContent(filePath)
+func (server *Server) getCurrentWord(filePath string, pos Position) (string, error) {
+	lines, err := server.cache.GetOrLoadFileContent(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to load file content: %v", err)
 	}

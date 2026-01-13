@@ -63,8 +63,8 @@ const (
 	SymbolKindTypeParameter = 26
 )
 
-// kindMap defines the mapping from ctags kinds to LSP completion item kinds
-var kindMap = map[string]int{
+// completionKindByTagKind defines the mapping from ctags kinds to LSP completion item kinds
+var completionKindByTagKind = map[string]int{
 	"alias":            CompletionItemKindVariable,
 	"arg":              CompletionItemKindVariable,
 	"attribute":        CompletionItemKindProperty,
@@ -247,8 +247,8 @@ var kindMap = map[string]int{
 	"xtask":            CompletionItemKindVariable,
 }
 
-// symbolKindMap defines the mapping from ctags kinds to LSP symbol kinds
-var symbolKindMap = map[string]int{
+// symbolKindByTagKind defines the mapping from ctags kinds to LSP symbol kinds
+var symbolKindByTagKind = map[string]int{
 	"alias":            SymbolKindVariable,
 	"arg":              SymbolKindVariable,
 	"attribute":        SymbolKindProperty,
@@ -412,7 +412,7 @@ var symbolKindMap = map[string]int{
 
 // GetLSPCompletionKind retrieves the corresponding LSP completion item kind for a given ctags kind string
 func GetLSPCompletionKind(ctagsKind string) int {
-	if kind, ok := kindMap[ctagsKind]; ok {
+	if kind, ok := completionKindByTagKind[ctagsKind]; ok {
 		return kind
 	}
 	return CompletionItemKindText // Default to Text if no match is found
@@ -420,7 +420,7 @@ func GetLSPCompletionKind(ctagsKind string) int {
 
 // GetLSPSymbolKind retrieves the corresponding LSP symbol kind for a given ctags kind string
 func GetLSPSymbolKind(ctagsKind string) (int, error) {
-	if kind, ok := symbolKindMap[ctagsKind]; ok {
+	if kind, ok := symbolKindByTagKind[ctagsKind]; ok {
 		return kind, nil
 	}
 	return 0, fmt.Errorf("no symbol kind for: %v", ctagsKind)

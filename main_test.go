@@ -168,7 +168,7 @@ func initializeServer(t *testing.T, server *Server, rootPath string) rpcSuccessE
 	}
 
 	var output bytes.Buffer
-	server.out = &output
+	server.output = &output
 	handleRequest(server, parsedReq)
 
 	return parseLSPResponse(t, output.String())
