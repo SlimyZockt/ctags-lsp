@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -208,6 +209,7 @@ type Server struct {
 	ctagsBin    string
 	tagfilePath string
 	languages   string
+	out         io.Writer
 	mu          sync.Mutex
 }
 
@@ -286,47 +288,28 @@ var version = "self compiled" // Populated with -X main.version
 
 // Main Function
 func main() {
-	config := parseFlags(os.Args)
+	os.Exit(run(os.Args, os.Stdin, os.Stdout, os.Stderr, checkCtagsInstallation))
+}
+
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, checkCtags func(string) error) int {
+	config, err := parseFlags(args, stdout)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 2
+	}
 
 	if config.showVersion {
-		fmt.Printf("CTags Language Server %s\n", version)
-		os.Exit(0)
+		fmt.Fprintf(stdout, "CTags Language Server %s\n", version)
+		return 0
 	}
 
 	// Check for ctags installation before proceeding
-	if err := checkCtagsInstallation(config.ctagsBin); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if config.benchmark {
-		// Mock the server
-		server := &Server{
-			cache: FileCache{
-				content: make(map[string][]string),
-			},
-			ctagsBin:    config.ctagsBin,
-			tagfilePath: config.tagfilePath,
-			languages:   config.languages,
-		}
-
-		// Mock the JSON-RPC request for 'initialize'
-		mockID := json.RawMessage(`1`)
-		mockParams := InitializeParams{RootURI: ""}
-		mockParamsBytes, _ := json.Marshal(mockParams)
-
-		mockReq := RPCRequest{
-			Jsonrpc: "2.0",
-			ID:      &mockID,
-			Method:  "initialize",
-			Params:  mockParamsBytes,
-		}
-
-		// Run ctags on the project
-		handleInitialize(server, mockReq)
-
-		// Exit immediately after initialize
-		os.Exit(0)
+	if err := checkCtags(config.ctagsBin); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
 	}
 
 	server := &Server{
@@ -336,14 +319,35 @@ func main() {
 		ctagsBin:    config.ctagsBin,
 		tagfilePath: config.tagfilePath,
 		languages:   config.languages,
+		out:         stdout,
 	}
 
+	if config.benchmark {
+		if err := runBenchmark(server); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	if err := serve(stdin, server); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+
+	return 0
+}
+
+func serve(r io.Reader, server *Server) error {
 	// Main loop to handle LSP messages
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReader(r)
 	for {
 		req, err := readMessage(reader)
 		if err != nil {
-			sendError(nil, -32600, "Malformed request", err.Error())
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			server.sendError(nil, -32600, "Malformed request", err.Error())
 			continue // Ignore malformed request
 		}
 
@@ -352,17 +356,39 @@ func main() {
 	}
 }
 
+func runBenchmark(server *Server) error {
+	// Mock the JSON-RPC request for 'initialize'
+	mockID := json.RawMessage(`1`)
+	mockParams := InitializeParams{RootURI: ""}
+	mockParamsBytes, err := json.Marshal(mockParams)
+	if err != nil {
+		return fmt.Errorf("marshal initialize params: %w", err)
+	}
+
+	mockReq := RPCRequest{
+		Jsonrpc: "2.0",
+		ID:      &mockID,
+		Method:  "initialize",
+		Params:  mockParamsBytes,
+	}
+
+	// Run ctags on the project
+	handleInitialize(server, mockReq)
+
+	return nil
+}
+
 // readMessage reads a single JSON-RPC message from the reader
 func readMessage(reader *bufio.Reader) (RPCRequest, error) {
 	contentLength := 0
 	for {
 		line, err := reader.ReadString('\r')
 		if err != nil {
-			return RPCRequest{}, fmt.Errorf("error reading header: %v", err)
+			return RPCRequest{}, fmt.Errorf("error reading header: %w", err)
 		}
 		b, err := reader.ReadByte()
 		if err != nil {
-			return RPCRequest{}, fmt.Errorf("error reading header: %v", err)
+			return RPCRequest{}, fmt.Errorf("error reading header: %w", err)
 		}
 		if b != '\n' {
 			return RPCRequest{}, fmt.Errorf("line endings must be \\r\\n")
@@ -383,7 +409,7 @@ func readMessage(reader *bufio.Reader) (RPCRequest, error) {
 	body := make([]byte, contentLength)
 	_, err := io.ReadFull(reader, body)
 	if err != nil {
-		return RPCRequest{}, fmt.Errorf("error reading body: %v", err)
+		return RPCRequest{}, fmt.Errorf("error reading body: %w", err)
 	}
 
 	var req RPCRequest
@@ -407,23 +433,29 @@ type Config struct {
 	languages   string
 }
 
-func parseFlags(args []string) *Config {
+func parseFlags(args []string, out io.Writer) (*Config, error) {
 	config := &Config{}
 
-	flag.Usage = flagUsage
-	flag.BoolVar(&config.showVersion, "version", false, "")
-	flag.BoolVar(&config.benchmark, "benchmark", false, "")
-	flag.StringVar(&config.ctagsBin, "ctags-bin", "ctags", "")
-	flag.StringVar(&config.tagfilePath, "tagfile", "", "")
-	flag.StringVar(&config.languages, "languages", "", "")
+	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
+	fs.SetOutput(out)
+	fs.Usage = func() {
+		flagUsage(out, args[0])
+	}
+	fs.BoolVar(&config.showVersion, "version", false, "")
+	fs.BoolVar(&config.benchmark, "benchmark", false, "")
+	fs.StringVar(&config.ctagsBin, "ctags-bin", "ctags", "")
+	fs.StringVar(&config.tagfilePath, "tagfile", "", "")
+	fs.StringVar(&config.languages, "languages", "", "")
 
-	flag.CommandLine.Parse(args[1:])
+	if err := fs.Parse(args[1:]); err != nil {
+		return nil, err
+	}
 
-	return config
+	return config, nil
 }
 
-func flagUsage() {
-	fmt.Printf(`CTags Language Server
+func flagUsage(w io.Writer, program string) {
+	fmt.Fprintf(w, `CTags Language Server
 Provides LSP functionality based on ctags.
 
 Usage:
@@ -435,7 +467,7 @@ Options:
   --ctags-bin <name>   Use custom ctags binary name (default: "ctags")
   --tagfile <path>     Use custom tagfile (default: tries "tags", ".tags" and ".git/tags")
   --languages <value>  Pass through language filter list to ctags
-`, os.Args[0])
+`, program)
 }
 
 // handleRequest routes JSON-RPC messages to appropriate handlers
@@ -447,7 +479,7 @@ func handleRequest(server *Server, req RPCRequest) {
 		if isNotification(req) {
 			return
 		}
-		sendError(req.ID, -32002, "Server not initialized", "Received request before successful initialization")
+		server.sendError(req.ID, -32002, "Server not initialized", "Received request before successful initialization")
 		return
 	}
 
@@ -483,7 +515,7 @@ func handleRequest(server *Server, req RPCRequest) {
 			return
 		}
 		message := fmt.Sprintf("Method not found: %s", req.Method)
-		sendError(req.ID, -32601, message, nil)
+		server.sendError(req.ID, -32601, message, nil)
 	}
 }
 
@@ -514,7 +546,7 @@ func handleInitialize(server *Server, req RPCRequest) {
 	var params InitializeParams
 	err := json.Unmarshal(req.Params, &params)
 	if err != nil {
-		sendError(req.ID, -32602, "Invalid params", nil)
+		server.sendError(req.ID, -32602, "Invalid params", nil)
 		return
 	}
 
@@ -522,7 +554,7 @@ func handleInitialize(server *Server, req RPCRequest) {
 		// Use current working directory if RootURI is empty
 		cwd, err := os.Getwd()
 		if err != nil {
-			sendError(req.ID, -32603, "Failed to get current working directory", err.Error())
+			server.sendError(req.ID, -32603, "Failed to get current working directory", err.Error())
 			return
 		}
 		server.rootPath = cwd
@@ -537,7 +569,7 @@ func handleInitialize(server *Server, req RPCRequest) {
 
 	// Load ctags entries
 	if err := server.scanWorkspace(); err != nil {
-		sendError(req.ID, -32603, "Internal error while scanning tags", err.Error())
+		server.sendError(req.ID, -32603, "Internal error while scanning tags", err.Error())
 		return
 	}
 
@@ -562,13 +594,13 @@ func handleInitialize(server *Server, req RPCRequest) {
 		},
 	}
 
-	sendResult(req.ID, result)
+	server.sendResult(req.ID, result)
 	server.initialized = true
 }
 
 // handleShutdown processes the 'shutdown' request
-func handleShutdown(_ *Server, req RPCRequest) {
-	sendResult(req.ID, nil)
+func handleShutdown(server *Server, req RPCRequest) {
+	server.sendResult(req.ID, nil)
 }
 
 // handleExit processes the 'exit' notification
@@ -666,13 +698,13 @@ func handleCompletion(server *Server, req RPCRequest) {
 	var params CompletionParams
 	err := json.Unmarshal(req.Params, &params)
 	if err != nil {
-		sendError(req.ID, -32602, "Invalid params", nil)
+		server.sendError(req.ID, -32602, "Invalid params", nil)
 		return
 	}
 
 	filePath, err := toRootRelativePath(server.rootPath, params.TextDocument.URI)
 	if err != nil {
-		sendError(req.ID, -32603, "Internal error", err.Error())
+		server.sendError(req.ID, -32603, "Internal error", err.Error())
 		return
 	}
 	currentFileExt := filepath.Ext(filePath)
@@ -683,7 +715,7 @@ func handleCompletion(server *Server, req RPCRequest) {
 	server.cache.mu.RUnlock()
 
 	if !ok || params.Position.Line >= len(lines) {
-		sendError(req.ID, -32603, "Internal error", "Line out of range")
+		server.sendError(req.ID, -32603, "Internal error", "Line out of range")
 		return
 	}
 
@@ -702,7 +734,7 @@ func handleCompletion(server *Server, req RPCRequest) {
 			// Allow empty prefix after '.' so method/function suggestions still appear.
 			word = ""
 		} else {
-			sendResult(req.ID, CompletionList{
+			server.sendResult(req.ID, CompletionList{
 				IsIncomplete: false,
 				Items:        []CompletionItem{},
 			})
@@ -764,7 +796,7 @@ func handleCompletion(server *Server, req RPCRequest) {
 		Items:        items,
 	}
 
-	sendResult(req.ID, result)
+	server.sendResult(req.ID, result)
 }
 
 // handleDefinition processes the 'textDocument/definition' request
@@ -772,20 +804,20 @@ func handleDefinition(server *Server, req RPCRequest) {
 	var params TextDocumentPositionParams
 	err := json.Unmarshal(req.Params, &params)
 	if err != nil {
-		sendError(req.ID, -32602, "Invalid params", nil)
+		server.sendError(req.ID, -32602, "Invalid params", nil)
 		return
 	}
 
 	filePath, err := toRootRelativePath(server.rootPath, params.TextDocument.URI)
 	if err != nil {
-		sendError(req.ID, -32603, "Internal error", err.Error())
+		server.sendError(req.ID, -32603, "Internal error", err.Error())
 		return
 	}
 
 	// Get the current word at the given position
 	symbol, err := server.getCurrentWord(filePath, params.Position)
 	if err != nil {
-		sendResult(req.ID, nil) // No symbol found at position or error occurred
+		server.sendResult(req.ID, nil) // No symbol found at position or error occurred
 		return
 	}
 
@@ -823,11 +855,11 @@ func handleDefinition(server *Server, req RPCRequest) {
 
 	// Send the locations back
 	if len(locations) == 0 {
-		sendResult(req.ID, nil) // No definition found
+		server.sendResult(req.ID, nil) // No definition found
 	} else if len(locations) == 1 {
-		sendResult(req.ID, locations[0])
+		server.sendResult(req.ID, locations[0])
 	} else {
-		sendResult(req.ID, locations)
+		server.sendResult(req.ID, locations)
 	}
 }
 
@@ -836,7 +868,7 @@ func handleWorkspaceSymbol(server *Server, req RPCRequest) {
 	var params WorkspaceSymbolParams
 	err := json.Unmarshal(req.Params, &params)
 	if err != nil {
-		sendError(req.ID, -32602, "Invalid params", nil)
+		server.sendError(req.ID, -32602, "Invalid params", nil)
 		return
 	}
 
@@ -884,7 +916,7 @@ func handleWorkspaceSymbol(server *Server, req RPCRequest) {
 		symbols = append(symbols, symbol)
 	}
 
-	sendResult(req.ID, symbols)
+	server.sendResult(req.ID, symbols)
 }
 
 // handleDocumentSymbol processes the 'textDocument/documentSymbol' request
@@ -892,13 +924,13 @@ func handleDocumentSymbol(server *Server, req RPCRequest) {
 	var params DocumentSymbolParams
 	err := json.Unmarshal(req.Params, &params)
 	if err != nil {
-		sendError(req.ID, -32602, "Invalid params", nil)
+		server.sendError(req.ID, -32602, "Invalid params", nil)
 		return
 	}
 
 	filePath, err := toRootRelativePath(server.rootPath, params.TextDocument.URI)
 	if err != nil {
-		sendError(req.ID, -32603, "Internal error", err.Error())
+		server.sendError(req.ID, -32603, "Internal error", err.Error())
 		return
 	}
 
@@ -944,7 +976,7 @@ func handleDocumentSymbol(server *Server, req RPCRequest) {
 		symbols = append(symbols, symbol)
 	}
 
-	sendResult(req.ID, symbols)
+	server.sendResult(req.ID, symbols)
 }
 
 // readFileLines reads the content of a file and returns it as a slice of lines
@@ -990,17 +1022,17 @@ func findSymbolRangeInFile(lines []string, symbolName string, lineNumber int) Ra
 }
 
 // sendResult sends a successful JSON-RPC response
-func sendResult(id *json.RawMessage, result any) {
+func (s *Server) sendResult(id *json.RawMessage, result any) {
 	response := RPCSuccessResponse{
 		Jsonrpc: "2.0",
 		ID:      id,
 		Result:  result,
 	}
-	sendResponse(response)
+	s.sendResponse(response)
 }
 
 // sendError sends an error JSON-RPC response
-func sendError(id *json.RawMessage, code int, message string, data any) {
+func (s *Server) sendError(id *json.RawMessage, code int, message string, data any) {
 	response := RPCErrorResponse{
 		Jsonrpc: "2.0",
 		ID:      id,
@@ -1010,11 +1042,11 @@ func sendError(id *json.RawMessage, code int, message string, data any) {
 			Data:    data,
 		},
 	}
-	sendResponse(response)
+	s.sendResponse(response)
 }
 
 // sendResponse marshals and sends the JSON-RPC response with appropriate headers
-func sendResponse(resp any) {
+func (s *Server) sendResponse(resp any) {
 	body, err := json.Marshal(resp)
 	if err != nil {
 		log.Printf("Error marshaling response: %v", err)
@@ -1022,7 +1054,11 @@ func sendResponse(resp any) {
 	}
 
 	// Write headers followed by the JSON body
-	fmt.Printf("Content-Length: %d\r\n\r\n%s", len(body), string(body))
+	writer := s.out
+	if writer == nil {
+		writer = os.Stdout
+	}
+	fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n%s", len(body), string(body))
 }
 
 // toRootRelativePath converts file URIs, absolute, or relative paths to a root-relative path.

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -105,31 +104,6 @@ func TestInitializeLSPRequest(t *testing.T) {
 	})
 }
 
-func captureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-
-	original := os.Stdout
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create pipe: %v", err)
-	}
-
-	os.Stdout = writer
-	done := make(chan string, 1)
-	go func() {
-		defer reader.Close()
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, reader)
-		done <- buf.String()
-	}()
-
-	fn()
-
-	_ = writer.Close()
-	os.Stdout = original
-	return <-done
-}
-
 func parseLSPResponse(t *testing.T, raw string) rpcSuccessEnvelope {
 	t.Helper()
 
@@ -193,11 +167,11 @@ func initializeServer(t *testing.T, server *Server, rootPath string) rpcSuccessE
 		t.Fatalf("read request: %v", err)
 	}
 
-	output := captureStdout(t, func() {
-		handleRequest(server, parsedReq)
-	})
+	var output bytes.Buffer
+	server.out = &output
+	handleRequest(server, parsedReq)
 
-	return parseLSPResponse(t, output)
+	return parseLSPResponse(t, output.String())
 }
 
 func hasTag(entries []TagEntry, name, path string) bool {
@@ -212,12 +186,9 @@ func hasTag(entries []TagEntry, name, path string) bool {
 func parseFlagsForTest(t *testing.T, args []string) *Config {
 	t.Helper()
 
-	original := flag.CommandLine
-	flag.CommandLine = flag.NewFlagSet(args[0], flag.ContinueOnError)
-	flag.CommandLine.SetOutput(io.Discard)
-	defer func() {
-		flag.CommandLine = original
-	}()
-
-	return parseFlags(args)
+	config, err := parseFlags(args, io.Discard)
+	if err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	return config
 }
