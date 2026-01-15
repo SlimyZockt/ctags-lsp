@@ -11,7 +11,6 @@ import (
 	"strings"
 )
 
-// RPCRequest represents a JSON-RPC request structure.
 type RPCRequest struct {
 	Jsonrpc string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id,omitempty"`
@@ -19,28 +18,26 @@ type RPCRequest struct {
 	Params  json.RawMessage  `json:"params,omitempty"`
 }
 
-// RPCSuccessResponse represents a successful JSON-RPC response structure.
 type RPCSuccessResponse struct {
 	Jsonrpc string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id"`
 	Result  any              `json:"result"`
 }
 
-// RPCErrorResponse represents an error JSON-RPC response structure.
 type RPCErrorResponse struct {
 	Jsonrpc string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id"`
 	Error   *RPCError        `json:"error"`
 }
 
-// RPCError represents a JSON-RPC error object.
 type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    any    `json:"data,omitempty"`
 }
 
-// readMessage reads a single JSON-RPC message from the reader.
+// readMessage parses a single JSON-RPC message framed by `Content-Length` headers.
+// It validates the request `id` shape (string or integer) when present.
 func readMessage(reader *bufio.Reader) (RPCRequest, error) {
 	contentLength := 0
 	for {
@@ -107,7 +104,6 @@ func isNotification(req RPCRequest) bool {
 	return req.ID == nil
 }
 
-// sendResult sends a successful JSON-RPC response.
 func (server *Server) sendResult(id *json.RawMessage, result any) {
 	response := RPCSuccessResponse{
 		Jsonrpc: "2.0",
@@ -117,7 +113,6 @@ func (server *Server) sendResult(id *json.RawMessage, result any) {
 	server.sendResponse(response)
 }
 
-// sendError sends an error JSON-RPC response.
 func (server *Server) sendError(id *json.RawMessage, code int, message string, data any) {
 	response := RPCErrorResponse{
 		Jsonrpc: "2.0",
@@ -131,7 +126,7 @@ func (server *Server) sendError(id *json.RawMessage, code int, message string, d
 	server.sendResponse(response)
 }
 
-// sendResponse marshals and sends the JSON-RPC response with appropriate headers.
+// sendResponse writes a JSON-RPC response to `server.output` (or stdout if unset).
 func (server *Server) sendResponse(resp any) {
 	body, err := json.Marshal(resp)
 	if err != nil {

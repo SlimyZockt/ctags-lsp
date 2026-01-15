@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// Config holds command-line configuration options.
+// Config holds values parsed from command-line flags.
 type Config struct {
 	showVersion bool
 	benchmark   bool
@@ -127,7 +127,6 @@ Options:
 `, program)
 }
 
-// getInstallInstructions returns OS-specific installation instructions for Universal Ctags.
 func getInstallInstructions() string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -147,7 +146,6 @@ func getInstallInstructions() string {
 	}
 }
 
-// checkCtagsInstallation verifies that Universal Ctags is installed and supports required features.
 func checkCtagsInstallation(ctagsBin string) error {
 	cmd := exec.Command(ctagsBin, "--version", "--output-format=json")
 	output, err := cmd.Output()

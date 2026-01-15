@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-// LSP Completion Item Kind Constants.
+// Numeric values match LSP 3.17 `CompletionItemKind`.
 const (
 	CompletionItemKindText          = 1
 	CompletionItemKindMethod        = 2
@@ -31,7 +31,7 @@ const (
 	CompletionItemKindTypeParameter = 25
 )
 
-// LSP Symbol Kind Constants.
+// Numeric values match LSP 3.17 `SymbolKind`.
 const (
 	SymbolKindFile          = 1
 	SymbolKindModule        = 2
@@ -61,7 +61,7 @@ const (
 	SymbolKindTypeParameter = 26
 )
 
-// completionKindByTagKind defines the mapping from ctags kinds to LSP completion item kinds.
+// completionKindByTagKind maps ctags `kind` strings to LSP `CompletionItemKind`.
 var completionKindByTagKind = map[string]int{
 	"alias":            CompletionItemKindVariable,
 	"arg":              CompletionItemKindVariable,
@@ -245,7 +245,7 @@ var completionKindByTagKind = map[string]int{
 	"xtask":            CompletionItemKindVariable,
 }
 
-// symbolKindByTagKind defines the mapping from ctags kinds to LSP symbol kinds.
+// symbolKindByTagKind maps ctags `kind` strings to LSP `SymbolKind`.
 var symbolKindByTagKind = map[string]int{
 	"alias":            SymbolKindVariable,
 	"arg":              SymbolKindVariable,
@@ -408,7 +408,8 @@ var symbolKindByTagKind = map[string]int{
 	"xtask":            SymbolKindVariable,
 }
 
-// GetLSPCompletionKind retrieves the corresponding LSP completion item kind for a given ctags kind string.
+// GetLSPCompletionKind returns the LSP `CompletionItemKind` for a ctags kind.
+// Unknown kinds fall back to `CompletionItemKindText`.
 func GetLSPCompletionKind(ctagsKind string) int {
 	if kind, ok := completionKindByTagKind[ctagsKind]; ok {
 		return kind
@@ -416,7 +417,8 @@ func GetLSPCompletionKind(ctagsKind string) int {
 	return CompletionItemKindText
 }
 
-// GetLSPSymbolKind retrieves the corresponding LSP symbol kind for a given ctags kind string.
+// GetLSPSymbolKind returns the LSP `SymbolKind` for a ctags kind.
+// It returns an error for unknown kinds so callers can skip unclassified entries.
 func GetLSPSymbolKind(ctagsKind string) (int, error) {
 	if kind, ok := symbolKindByTagKind[ctagsKind]; ok {
 		return kind, nil

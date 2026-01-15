@@ -11,18 +11,15 @@ import (
 	"sync"
 )
 
-// InitializeParams represents parameters for the 'initialize' request.
 type InitializeParams struct {
 	RootURI string `json:"rootUri"`
 }
 
-// InitializeResult represents the result of the 'initialize' request.
 type InitializeResult struct {
 	Capabilities ServerCapabilities `json:"capabilities"`
 	Info         ServerInfo         `json:"serverInfo"`
 }
 
-// ServerCapabilities defines the capabilities of the language server.
 type ServerCapabilities struct {
 	TextDocumentSync        *TextDocumentSyncOptions `json:"textDocumentSync,omitempty"`
 	CompletionProvider      *CompletionOptions       `json:"completionProvider,omitempty"`
@@ -31,35 +28,29 @@ type ServerCapabilities struct {
 	DocumentSymbolProvider  bool                     `json:"documentSymbolProvider,omitempty"`
 }
 
-// ServerInfo defines the server name and version.
 type ServerInfo struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 }
 
-// TextDocumentSyncOptions defines options for text document synchronization.
 type TextDocumentSyncOptions struct {
 	Change    int  `json:"change"`
 	OpenClose bool `json:"openClose"`
 	Save      bool `json:"save"`
 }
 
-// CompletionOptions defines options for the completion provider.
 type CompletionOptions struct {
 	TriggerCharacters []string `json:"triggerCharacters,omitempty"`
 }
 
-// WorkspaceSymbolParams represents the parameters for the 'workspace/symbol' request.
 type WorkspaceSymbolParams struct {
 	Query string `json:"query"`
 }
 
-// DocumentSymbolParams represents the parameters for the 'textDocument/documentSymbol' request.
 type DocumentSymbolParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 }
 
-// SymbolInformation represents information about a symbol.
 type SymbolInformation struct {
 	Name          string   `json:"name"`
 	Kind          int      `json:"kind"`
@@ -67,12 +58,10 @@ type SymbolInformation struct {
 	ContainerName string   `json:"containerName,omitempty"`
 }
 
-// DidOpenTextDocumentParams represents the 'textDocument/didOpen' notification.
 type DidOpenTextDocumentParams struct {
 	TextDocument TextDocument `json:"textDocument"`
 }
 
-// TextDocument represents a text document in the editor.
 type TextDocument struct {
 	URI        string `json:"uri"`
 	LanguageID string `json:"languageId"`
@@ -80,57 +69,47 @@ type TextDocument struct {
 	Text       string `json:"text"`
 }
 
-// TextDocumentPositionParams represents the parameters used in requests that require a text document and position.
 type TextDocumentPositionParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 	Position     Position               `json:"position"`
 }
 
-// DidChangeTextDocumentParams represents the 'textDocument/didChange' notification.
 type DidChangeTextDocumentParams struct {
 	TextDocument   TextDocumentIdentifier           `json:"textDocument"`
 	ContentChanges []TextDocumentContentChangeEvent `json:"contentChanges"`
 }
 
-// TextDocumentIdentifier identifies a text document.
 type TextDocumentIdentifier struct {
 	URI string `json:"uri"`
 }
 
-// TextDocumentContentChangeEvent represents a change in the text document.
 type TextDocumentContentChangeEvent struct {
 	Text string `json:"text"`
 }
 
-// DidCloseTextDocumentParams represents the 'textDocument/didClose' notification.
 type DidCloseTextDocumentParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 }
 
-// DidSaveTextDocumentParams represents the 'textDocument/didSave' notification.
 type DidSaveTextDocumentParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 	Text         string                 `json:"text,omitempty"`
 }
 
-// CompletionParams represents the 'textDocument/completion' request.
 type CompletionParams struct {
 	TextDocument PositionParams `json:"textDocument"`
 	Position     Position       `json:"position"`
 }
 
-// Position represents a position in a text document.
 type Position struct {
 	Line      int `json:"line"`
 	Character int `json:"character"`
 }
 
-// PositionParams holds the URI for position-based requests.
 type PositionParams struct {
 	URI string `json:"uri"`
 }
 
-// CompletionItem represents a completion suggestion.
 type CompletionItem struct {
 	Label         string         `json:"label"`
 	Kind          int            `json:"kind,omitempty"`
@@ -138,31 +117,27 @@ type CompletionItem struct {
 	Documentation *MarkupContent `json:"documentation,omitempty"`
 }
 
-// MarkupContent represents documentation content.
 type MarkupContent struct {
 	Kind  string `json:"kind"`
 	Value string `json:"value"`
 }
 
-// CompletionList represents a list of completion items.
 type CompletionList struct {
 	IsIncomplete bool             `json:"isIncomplete"`
 	Items        []CompletionItem `json:"items"`
 }
 
-// Location represents a location in a text document.
 type Location struct {
 	URI   string `json:"uri"`
 	Range Range  `json:"range"`
 }
 
-// Range represents a range in a text document.
 type Range struct {
 	Start Position `json:"start"`
 	End   Position `json:"end"`
 }
 
-// TagEntry represents a single ctags JSON entry.
+// TagEntry matches the JSON entry shape produced by Universal Ctags `--output-format=json`.
 type TagEntry struct {
 	Type      string `json:"_type"`
 	Name      string `json:"name"`
@@ -176,7 +151,6 @@ type TagEntry struct {
 	Language  string `json:"language,omitempty"`
 }
 
-// Server represents the language server.
 type Server struct {
 	tagEntries  []TagEntry
 	rootPath    string
@@ -189,13 +163,11 @@ type Server struct {
 	mutex       sync.Mutex
 }
 
-// FileCache stores the content of opened files for quick access.
 type FileCache struct {
 	mutex   sync.RWMutex
 	content map[string][]string
 }
 
-// handleRequest routes JSON-RPC messages to appropriate handlers.
 func handleRequest(server *Server, req RPCRequest) {
 	if !server.initialized && req.Method != "initialize" && req.Method != "shutdown" && req.Method != "exit" {
 		if isNotification(req) {
@@ -241,7 +213,6 @@ func handleRequest(server *Server, req RPCRequest) {
 	}
 }
 
-// handleInitialize processes the 'initialize' request.
 func handleInitialize(server *Server, req RPCRequest) {
 	var params InitializeParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -272,7 +243,7 @@ func handleInitialize(server *Server, req RPCRequest) {
 	result := InitializeResult{
 		Capabilities: ServerCapabilities{
 			TextDocumentSync: &TextDocumentSyncOptions{
-				Change:    1,
+				Change:    1, // LSP TextDocumentSyncKindFull.
 				OpenClose: true,
 				Save:      true,
 			},
@@ -293,17 +264,14 @@ func handleInitialize(server *Server, req RPCRequest) {
 	server.initialized = true
 }
 
-// handleShutdown processes the 'shutdown' request.
 func handleShutdown(server *Server, req RPCRequest) {
 	server.sendResult(req.ID, nil)
 }
 
-// handleExit processes the 'exit' notification.
 func handleExit(_ *Server, _ RPCRequest) {
 	os.Exit(0)
 }
 
-// handleDidOpen processes the 'textDocument/didOpen' notification.
 func handleDidOpen(server *Server, req RPCRequest) {
 	var params DidOpenTextDocumentParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -323,7 +291,6 @@ func handleDidOpen(server *Server, req RPCRequest) {
 	server.cache.mutex.Unlock()
 }
 
-// handleDidChange processes the 'textDocument/didChange' notification.
 func handleDidChange(server *Server, req RPCRequest) {
 	var params DidChangeTextDocumentParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -344,7 +311,6 @@ func handleDidChange(server *Server, req RPCRequest) {
 	}
 }
 
-// handleDidClose processes the 'textDocument/didClose' notification.
 func handleDidClose(server *Server, req RPCRequest) {
 	var params DidCloseTextDocumentParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -362,7 +328,6 @@ func handleDidClose(server *Server, req RPCRequest) {
 	server.cache.mutex.Unlock()
 }
 
-// handleDidSave processes the 'textDocument/didSave' notification.
 func handleDidSave(server *Server, req RPCRequest) {
 	var params DidSaveTextDocumentParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -380,7 +345,6 @@ func handleDidSave(server *Server, req RPCRequest) {
 	}
 }
 
-// handleCompletion processes the 'textDocument/completion' request.
 func handleCompletion(server *Server, req RPCRequest) {
 	var params CompletionParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -476,7 +440,6 @@ func handleCompletion(server *Server, req RPCRequest) {
 	server.sendResult(req.ID, result)
 }
 
-// handleDefinition processes the 'textDocument/definition' request.
 func handleDefinition(server *Server, req RPCRequest) {
 	var params TextDocumentPositionParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -533,7 +496,6 @@ func handleDefinition(server *Server, req RPCRequest) {
 	}
 }
 
-// handleWorkspaceSymbol processes the 'workspace/symbol' request.
 func handleWorkspaceSymbol(server *Server, req RPCRequest) {
 	var params WorkspaceSymbolParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -585,7 +547,6 @@ func handleWorkspaceSymbol(server *Server, req RPCRequest) {
 	server.sendResult(req.ID, symbols)
 }
 
-// handleDocumentSymbol processes the 'textDocument/documentSymbol' request.
 func handleDocumentSymbol(server *Server, req RPCRequest) {
 	var params DocumentSymbolParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -641,7 +602,8 @@ func handleDocumentSymbol(server *Server, req RPCRequest) {
 	server.sendResult(req.ID, symbols)
 }
 
-// toRootRelativePath converts file URIs, absolute, or relative paths to a root-relative path.
+// toRootRelativePath normalizes file URIs, absolute paths, and relative paths to a root-relative path.
+// It rejects inputs that escape `rootPath`.
 func toRootRelativePath(rootPath, raw string) (string, error) {
 	if after, ok := strings.CutPrefix(raw, "file://"); ok {
 		raw = filepath.FromSlash(after)
@@ -668,7 +630,7 @@ func toRootRelativePath(rootPath, raw string) (string, error) {
 	return rel, nil
 }
 
-// relativePathToAbsoluteURI builds a file URI from a root-relative path.
+// relativePathToAbsoluteURI builds a `file://` URI from a root-relative path.
 func relativePathToAbsoluteURI(rootPath, rel string) (string, error) {
 	if strings.HasPrefix(rel, "..") {
 		return "", fmt.Errorf("path outside root: %q", rel)
@@ -677,7 +639,6 @@ func relativePathToAbsoluteURI(rootPath, rel string) (string, error) {
 	return "file://" + filepath.ToSlash(absPath), nil
 }
 
-// readFileLines reads the content of a file and returns it as a slice of lines.
 func readFileLines(filePath string) ([]string, error) {
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
@@ -686,7 +647,6 @@ func readFileLines(filePath string) ([]string, error) {
 	return strings.Split(string(contentBytes), "\n"), nil
 }
 
-// GetOrLoadFileContent retrieves file content from cache or loads it from disk if not present.
 func (cache *FileCache) GetOrLoadFileContent(filePath string) ([]string, error) {
 	cache.mutex.RLock()
 	content, ok := cache.content[filePath]
@@ -704,7 +664,7 @@ func (cache *FileCache) GetOrLoadFileContent(filePath string) ([]string, error) 
 	return lines, nil
 }
 
-// findSymbolRangeInFile searches for the symbol in the specified line and returns its range.
+// findSymbolRangeInFile returns a range for `symbolName` on `lineNumber` (1-based).
 func findSymbolRangeInFile(lines []string, symbolName string, lineNumber int) Range {
 	lineIdx := lineNumber - 1
 	if lineIdx < 0 || lineIdx >= len(lines) {
@@ -731,7 +691,6 @@ func findSymbolRangeInFile(lines []string, symbolName string, lineNumber int) Ra
 	}
 }
 
-// getCurrentWord retrieves the current word at the given position in the document.
 func (server *Server) getCurrentWord(filePath string, pos Position) (string, error) {
 	lines, err := server.cache.GetOrLoadFileContent(filePath)
 	if err != nil {
@@ -765,7 +724,6 @@ func (server *Server) getCurrentWord(filePath string, pos Position) (string, err
 	return string(runes[start:end]), nil
 }
 
-// isIdentifierChar checks if a rune is a valid identifier character.
 func isIdentifierChar(c rune) bool {
 	return (c >= 'a' && c <= 'z') ||
 		(c >= 'A' && c <= 'Z') ||

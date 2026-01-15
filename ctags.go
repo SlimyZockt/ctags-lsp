@@ -22,7 +22,10 @@ func (server *Server) ctagsArgs(extra ...string) []string {
 	return append(args, extra...)
 }
 
-// scanWorkspace runs ctags on the workspace using parallel chunks for performance.
+// scanWorkspace populates `server.tagEntries` from either:
+// - an explicit `--tagfile`, then
+// - a discovered tags file (see `findTagsFile`), or
+// - a fresh ctags scan of the workspace.
 func (server *Server) scanWorkspace() error {
 	if server.tagfilePath != "" {
 		tagsPath := server.tagfilePath
@@ -91,7 +94,7 @@ func (server *Server) scanWorkspace() error {
 	return nil
 }
 
-// listWorkspaceFiles returns a list of relative file paths using git, jj, or a directory walk.
+// listWorkspaceFiles returns root-relative file paths using git, jj, or a directory walk.
 func listWorkspaceFiles(root string) ([]string, error) {
 	if isGitRepo(root) {
 		output, err := exec.Command("git", "-C", root, "ls-files").Output()
@@ -123,20 +126,17 @@ func listWorkspaceFiles(root string) ([]string, error) {
 	return workspacePathsToRootRelative(root, files)
 }
 
-// isGitRepo checks if the directory is a Git repository.
 func isGitRepo(path string) bool {
 	cmd := exec.Command("git", "-C", path, "rev-parse", "--is-inside-work-tree")
 	return cmd.Run() == nil
 }
 
-// isJjRepo checks if the directory is a Jujutsu repository.
 func isJjRepo(path string) bool {
 	cmd := exec.Command("jj", "repo", "info", "--repository", path)
 	return cmd.Run() == nil
 }
 
-// workspacePathsToRootRelative converts general workspace paths to root-relative form.
-// Used only by listWorkspaceFiles for non-tagfile sources.
+// workspacePathsToRootRelative normalizes candidate workspace paths to root-relative form.
 func workspacePathsToRootRelative(rootPath string, paths []string) ([]string, error) {
 	relativePaths := make([]string, 0, len(paths))
 	for _, path := range paths {
@@ -149,7 +149,7 @@ func workspacePathsToRootRelative(rootPath string, paths []string) ([]string, er
 	return relativePaths, nil
 }
 
-// scanSingleFileTag scans a single file, removing previous entries for that file.
+// scanSingleFileTag rescans a single file and drops any previous entries for that path.
 func (server *Server) scanSingleFileTag(filePath string) error {
 	if strings.HasPrefix(filePath, "..") {
 		return fmt.Errorf("path outside root: %s", filePath)
@@ -170,7 +170,6 @@ func (server *Server) scanSingleFileTag(filePath string) error {
 	return server.processTagsOutput(cmd)
 }
 
-// processTagsOutput handles the ctags command execution and output processing.
 func (server *Server) processTagsOutput(cmd *exec.Cmd) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

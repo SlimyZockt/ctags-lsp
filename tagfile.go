@@ -15,7 +15,6 @@ type tagfileKindMap struct {
 	kindNames  map[string]bool
 }
 
-// newTagfileKindMap initializes a kind map for tagfile kind letter resolution.
 func newTagfileKindMap() *tagfileKindMap {
 	return &tagfileKindMap{
 		byLanguage: make(map[string]map[string]string),
@@ -24,7 +23,6 @@ func newTagfileKindMap() *tagfileKindMap {
 	}
 }
 
-// add stores a kind letter mapping for a language and tracks the kind name.
 func (kindMap *tagfileKindMap) add(language, letter, kind string) {
 	if language == "" {
 		language = "default"
@@ -39,7 +37,6 @@ func (kindMap *tagfileKindMap) add(language, letter, kind string) {
 	kindMap.kindNames[kind] = true
 }
 
-// resolve returns the kind name for a kind letter using language-specific or default mappings.
 func (kindMap *tagfileKindMap) resolve(language, letter string) (string, bool) {
 	if language != "" {
 		if byLang, ok := kindMap.byLanguage[language]; ok {
@@ -54,12 +51,11 @@ func (kindMap *tagfileKindMap) resolve(language, letter string) (string, bool) {
 	return "", false
 }
 
-// isKindName reports whether a kind name exists in the tagfile metadata.
 func (kindMap *tagfileKindMap) isKindName(kind string) bool {
 	return kindMap.kindNames[kind]
 }
 
-// findTagsFile checks for existing tags files and returns the first one found.
+// findTagsFile checks for a tags file in a few conventional locations under `root`.
 func findTagsFile(root string) (string, bool) {
 	tagsLocations := []string{
 		"tags",
@@ -77,7 +73,7 @@ func findTagsFile(root string) (string, bool) {
 	return "", false
 }
 
-// parseTagfile reads a ctags tagfile and returns entries in the same shape as processTagsOutput.
+// parseTagfile reads a tags file and returns entries in the same shape as `processTagsOutput`.
 func parseTagfile(tagsPath, rootPath string) ([]TagEntry, error) {
 	file, err := os.Open(tagsPath)
 	if err != nil {
@@ -145,7 +141,8 @@ func parseTagfileKindDescription(line string, kindMap *tagfileKindMap) {
 	kindMap.add(language, letter, kind)
 }
 
-// parseTagfileEntry parses a tagfile line into a TagEntry, skipping invalid or out-of-root entries.
+// parseTagfileEntry parses a single tags file line into a TagEntry.
+// It skips invalid entries and entries whose paths can't be normalized under `rootPath`.
 func parseTagfileEntry(line, tagsPath, rootPath string, kindMap *tagfileKindMap) (TagEntry, bool) {
 	fields := strings.Split(line, "\t")
 	if len(fields) < 3 {
@@ -231,8 +228,8 @@ func resolveTagfileKind(kindField string, entry *TagEntry, kindMap *tagfileKindM
 	return kindField
 }
 
-// tagfilePathToRootRelative takes a path from a tags file, interprets it relative to the tagfile directory if needed,
-// and returns it as a root-relative path.
+// tagfilePathToRootRelative normalizes a tags-file path to a root-relative path.
+// Relative paths are interpreted relative to the tagfile's directory.
 func tagfilePathToRootRelative(rootPath, tagsPath, raw string) (string, error) {
 	if after, ok := strings.CutPrefix(raw, "file://"); ok {
 		raw = filepath.FromSlash(after)
