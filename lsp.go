@@ -138,6 +138,7 @@ type Range struct {
 }
 
 // TagEntry matches the JSON entry shape produced by Universal Ctags `--output-format=json`.
+// Paths are normalized to absolute file:// URIs once ingested.
 type TagEntry struct {
 	Type      string `json:"_type"`
 	Name      string `json:"name"`
@@ -153,7 +154,7 @@ type TagEntry struct {
 
 type Server struct {
 	tagEntries  []TagEntry
-	rootPath    string
+	rootURI     string
 	cache       FileCache
 	initialized bool
 	ctagsBin    string
@@ -226,13 +227,14 @@ func handleInitialize(server *Server, req RPCRequest) {
 			server.sendError(req.ID, -32603, "Failed to get current working directory", err.Error())
 			return
 		}
-		server.rootPath = cwd
+		rootURI := pathToFileURI(cwd)
+		server.rootURI = rootURI
 	} else {
-		rootPath := params.RootURI
-		if after, ok := strings.CutPrefix(rootPath, "file://"); ok {
-			rootPath = filepath.FromSlash(after)
+		if err := validateFileURI(params.RootURI); err != nil {
+			server.sendError(req.ID, -32602, "Invalid params", err.Error())
+			return
 		}
-		server.rootPath = rootPath
+		server.rootURI = params.RootURI
 	}
 
 	if err := server.scanWorkspace(); err != nil {
@@ -278,16 +280,14 @@ func handleDidOpen(server *Server, req RPCRequest) {
 		return
 	}
 
-	filePath, err := toRootRelativePath(server.rootPath, params.TextDocument.URI)
-	if err != nil {
-		log.Printf("Failed to normalize path for didOpen: %v", err)
+	if err := validateFileURI(params.TextDocument.URI); err != nil {
 		return
 	}
 
 	content := strings.Split(params.TextDocument.Text, "\n")
 
 	server.cache.mutex.Lock()
-	server.cache.content[filePath] = content
+	server.cache.content[params.TextDocument.URI] = content
 	server.cache.mutex.Unlock()
 }
 
@@ -297,16 +297,14 @@ func handleDidChange(server *Server, req RPCRequest) {
 		return
 	}
 
-	filePath, err := toRootRelativePath(server.rootPath, params.TextDocument.URI)
-	if err != nil {
-		log.Printf("Failed to normalize path for didChange: %v", err)
+	if err := validateFileURI(params.TextDocument.URI); err != nil {
 		return
 	}
 
 	if len(params.ContentChanges) > 0 {
 		content := strings.Split(params.ContentChanges[0].Text, "\n")
 		server.cache.mutex.Lock()
-		server.cache.content[filePath] = content
+		server.cache.content[params.TextDocument.URI] = content
 		server.cache.mutex.Unlock()
 	}
 }
@@ -317,14 +315,12 @@ func handleDidClose(server *Server, req RPCRequest) {
 		return
 	}
 
-	filePath, err := toRootRelativePath(server.rootPath, params.TextDocument.URI)
-	if err != nil {
-		log.Printf("Failed to normalize path for didClose: %v", err)
+	if err := validateFileURI(params.TextDocument.URI); err != nil {
 		return
 	}
 
 	server.cache.mutex.Lock()
-	delete(server.cache.content, filePath)
+	delete(server.cache.content, params.TextDocument.URI)
 	server.cache.mutex.Unlock()
 }
 
@@ -334,14 +330,12 @@ func handleDidSave(server *Server, req RPCRequest) {
 		return
 	}
 
-	filePath, err := toRootRelativePath(server.rootPath, params.TextDocument.URI)
-	if err != nil {
-		log.Printf("Failed to normalize path for didSave: %v", err)
+	if err := validateFileURI(params.TextDocument.URI); err != nil {
 		return
 	}
 
-	if err := server.scanSingleFileTag(filePath); err != nil {
-		log.Printf("Error rescanning file %s: %v", filePath, err)
+	if err := server.scanSingleFileTag(params.TextDocument.URI); err != nil {
+		log.Printf("Error rescanning file %s: %v", params.TextDocument.URI, err)
 	}
 }
 
@@ -352,15 +346,15 @@ func handleCompletion(server *Server, req RPCRequest) {
 		return
 	}
 
-	filePath, err := toRootRelativePath(server.rootPath, params.TextDocument.URI)
+	filePath, err := fileURIToPath(params.TextDocument.URI)
 	if err != nil {
-		server.sendError(req.ID, -32603, "Internal error", err.Error())
+		server.sendError(req.ID, -32602, "Invalid params", err.Error())
 		return
 	}
 	currentFileExt := filepath.Ext(filePath)
 
 	server.cache.mutex.RLock()
-	lines, ok := server.cache.content[filePath]
+	lines, ok := server.cache.content[params.TextDocument.URI]
 	server.cache.mutex.RUnlock()
 
 	if !ok || params.Position.Line >= len(lines) {
@@ -376,7 +370,7 @@ func handleCompletion(server *Server, req RPCRequest) {
 		isAfterDot = prevChar == '.'
 	}
 
-	word, err := server.getCurrentWord(filePath, params.Position)
+	word, err := server.getCurrentWord(params.TextDocument.URI, params.Position)
 	if err != nil {
 		if isAfterDot {
 			word = ""
@@ -400,7 +394,11 @@ func handleCompletion(server *Server, req RPCRequest) {
 
 			kind := GetLSPCompletionKind(entry.Kind)
 
-			entryFilePath := filepath.Join(server.rootPath, entry.Path)
+			entryFilePath, err := fileURIToPath(entry.Path)
+			if err != nil {
+				log.Printf("Failed to parse entry URI %s: %v", entry.Path, err)
+				continue
+			}
 			entryFileExt := filepath.Ext(entryFilePath)
 
 			includeEntry := false
@@ -447,13 +445,12 @@ func handleDefinition(server *Server, req RPCRequest) {
 		return
 	}
 
-	filePath, err := toRootRelativePath(server.rootPath, params.TextDocument.URI)
-	if err != nil {
-		server.sendError(req.ID, -32603, "Internal error", err.Error())
+	if err := validateFileURI(params.TextDocument.URI); err != nil {
+		server.sendError(req.ID, -32602, "Invalid params", err.Error())
 		return
 	}
 
-	symbol, err := server.getCurrentWord(filePath, params.Position)
+	symbol, err := server.getCurrentWord(params.TextDocument.URI, params.Position)
 	if err != nil {
 		server.sendResult(req.ID, nil)
 		return
@@ -465,12 +462,6 @@ func handleDefinition(server *Server, req RPCRequest) {
 	var locations []Location
 	for _, entry := range server.tagEntries {
 		if entry.Name == symbol {
-			uri, err := relativePathToAbsoluteURI(server.rootPath, entry.Path)
-			if err != nil {
-				log.Printf("Failed to build URI for %s: %v", entry.Path, err)
-				continue
-			}
-
 			content, err := server.cache.GetOrLoadFileContent(entry.Path)
 			if err != nil {
 				log.Printf("Failed to get content for file %s: %v", entry.Path, err)
@@ -480,7 +471,7 @@ func handleDefinition(server *Server, req RPCRequest) {
 			symbolRange := findSymbolRangeInFile(content, entry.Name, entry.Line)
 
 			location := Location{
-				URI:   uri,
+				URI:   entry.Path,
 				Range: symbolRange,
 			}
 			locations = append(locations, location)
@@ -518,12 +509,6 @@ func handleWorkspaceSymbol(server *Server, req RPCRequest) {
 		if err != nil {
 			continue
 		}
-		uri, err := relativePathToAbsoluteURI(server.rootPath, entry.Path)
-		if err != nil {
-			log.Printf("Failed to build URI for %s: %v", entry.Path, err)
-			continue
-		}
-
 		content, err := server.cache.GetOrLoadFileContent(entry.Path)
 		if err != nil {
 			log.Printf("Failed to get content for file %s: %v", entry.Path, err)
@@ -536,7 +521,7 @@ func handleWorkspaceSymbol(server *Server, req RPCRequest) {
 			Name: entry.Name,
 			Kind: kind,
 			Location: Location{
-				URI:   uri,
+				URI:   entry.Path,
 				Range: symbolRange,
 			},
 			ContainerName: entry.Scope,
@@ -554,9 +539,8 @@ func handleDocumentSymbol(server *Server, req RPCRequest) {
 		return
 	}
 
-	filePath, err := toRootRelativePath(server.rootPath, params.TextDocument.URI)
-	if err != nil {
-		server.sendError(req.ID, -32603, "Internal error", err.Error())
+	if err := validateFileURI(params.TextDocument.URI); err != nil {
+		server.sendError(req.ID, -32602, "Invalid params", err.Error())
 		return
 	}
 
@@ -566,18 +550,12 @@ func handleDocumentSymbol(server *Server, req RPCRequest) {
 	var symbols []SymbolInformation
 
 	for _, entry := range server.tagEntries {
-		if entry.Path != filePath {
+		if entry.Path != params.TextDocument.URI {
 			continue
 		}
 
 		kind, err := GetLSPSymbolKind(entry.Kind)
 		if err != nil {
-			continue
-		}
-
-		uri, err := relativePathToAbsoluteURI(server.rootPath, entry.Path)
-		if err != nil {
-			log.Printf("Failed to build URI for %s: %v", entry.Path, err)
 			continue
 		}
 
@@ -592,7 +570,7 @@ func handleDocumentSymbol(server *Server, req RPCRequest) {
 		symbol := SymbolInformation{
 			Name:          entry.Name,
 			Kind:          kind,
-			Location:      Location{URI: uri, Range: symbolRange},
+			Location:      Location{URI: entry.Path, Range: symbolRange},
 			ContainerName: entry.Scope,
 		}
 
@@ -602,44 +580,47 @@ func handleDocumentSymbol(server *Server, req RPCRequest) {
 	server.sendResult(req.ID, symbols)
 }
 
-// toRootRelativePath normalizes file URIs, absolute paths, and relative paths to a root-relative path.
-// It rejects inputs that escape `rootPath`.
-func toRootRelativePath(rootPath, raw string) (string, error) {
-	if after, ok := strings.CutPrefix(raw, "file://"); ok {
-		raw = filepath.FromSlash(after)
+func validateFileURI(uri string) error {
+	_, err := fileURIToPath(uri)
+	return err
+}
+
+func fileURIToPath(uri string) (string, error) {
+	after, ok := strings.CutPrefix(uri, "file://")
+	if !ok {
+		return "", fmt.Errorf("expected file:// URI: %q", uri)
+	}
+	if after == "" {
+		return "", fmt.Errorf("empty file URI")
+	}
+	path := filepath.Clean(filepath.FromSlash(after))
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("file URI is not absolute: %q", uri)
+	}
+	return path, nil
+}
+
+// pathToFileURI expects an absolute, cleaned filesystem path.
+func pathToFileURI(path string) string {
+	return "file://" + filepath.ToSlash(path)
+}
+
+// normalizePath expects raw filesystem paths from ctags/tagfiles, not file:// URIs.
+func normalizePath(baseDir, raw string) (string, error) {
+	if raw == "" {
+		return "", fmt.Errorf("empty path")
 	}
 
 	clean := filepath.Clean(raw)
-
-	if filepath.IsAbs(clean) {
-		rel, err := filepath.Rel(rootPath, clean)
-		if err != nil {
-			return "", fmt.Errorf("make relative: %w", err)
-		}
-		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, "..") {
-			return "", fmt.Errorf("path outside root: %q", clean)
-		}
-		return rel, nil
+	if !filepath.IsAbs(clean) {
+		clean = filepath.Clean(filepath.Join(baseDir, clean))
 	}
-
-	rel := filepath.ToSlash(clean)
-	if strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("path outside root: %q", rel)
-	}
-	return rel, nil
+	return clean, nil
 }
 
-// relativePathToAbsoluteURI builds a `file://` URI from a root-relative path.
-func relativePathToAbsoluteURI(rootPath, rel string) (string, error) {
-	if strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("path outside root: %q", rel)
-	}
-	absPath := filepath.Clean(filepath.Join(rootPath, filepath.FromSlash(rel)))
-	return "file://" + filepath.ToSlash(absPath), nil
-}
-
-func readFileLines(filePath string) ([]string, error) {
+// readFileLines assumes fileURI is already validated by callers.
+func readFileLines(fileURI string) ([]string, error) {
+	filePath, _ := fileURIToPath(fileURI)
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err

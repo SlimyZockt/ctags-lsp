@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -126,7 +125,7 @@ func (server *Server) sendError(id *json.RawMessage, code int, message string, d
 	server.sendResponse(response)
 }
 
-// sendResponse writes a JSON-RPC response to `server.output` (or stdout if unset).
+// sendResponse writes a JSON-RPC response to `server.output`.
 func (server *Server) sendResponse(resp any) {
 	body, err := json.Marshal(resp)
 	if err != nil {
@@ -134,9 +133,5 @@ func (server *Server) sendResponse(resp any) {
 		return
 	}
 
-	writer := server.output
-	if writer == nil {
-		writer = os.Stdout
-	}
-	fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n%s", len(body), string(body))
+	fmt.Fprintf(server.output, "Content-Length: %d\r\n\r\n%s", len(body), string(body))
 }

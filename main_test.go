@@ -72,8 +72,9 @@ func TestInitializeLSPRequest(t *testing.T) {
 	})
 
 	t.Run("server state", func(t *testing.T) {
-		if server.rootPath != tempDir {
-			t.Fatalf("expected root path %q, got %q", tempDir, server.rootPath)
+		expectedRootURI := "file://" + filepath.ToSlash(tempDir)
+		if server.rootURI != expectedRootURI {
+			t.Fatalf("expected root uri %q, got %q", expectedRootURI, server.rootURI)
 		}
 		if !server.initialized {
 			t.Fatal("expected server to be initialized")
@@ -85,7 +86,7 @@ func TestInitializeLSPRequest(t *testing.T) {
 			t.Fatal("expected tag entries from ctags scan")
 		}
 
-		path := "hello.go"
+		path := "file://" + filepath.ToSlash(filepath.Join(tempDir, "hello.go"))
 		cases := []struct {
 			name   string
 			symbol string

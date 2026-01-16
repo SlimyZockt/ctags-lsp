@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -74,7 +75,7 @@ func findTagsFile(root string) (string, bool) {
 }
 
 // parseTagfile reads a tags file and returns entries in the same shape as `processTagsOutput`.
-func parseTagfile(tagsPath, rootPath string) ([]TagEntry, error) {
+func parseTagfile(tagsPath string) ([]TagEntry, error) {
 	file, err := os.Open(tagsPath)
 	if err != nil {
 		return nil, err
@@ -96,7 +97,7 @@ func parseTagfile(tagsPath, rootPath string) ([]TagEntry, error) {
 			continue
 		}
 
-		entry, ok := parseTagfileEntry(line, tagsPath, rootPath, kindMap)
+		entry, ok := parseTagfileEntry(line, tagsPath, kindMap)
 		if ok {
 			entries = append(entries, entry)
 		}
@@ -142,8 +143,8 @@ func parseTagfileKindDescription(line string, kindMap *tagfileKindMap) {
 }
 
 // parseTagfileEntry parses a single tags file line into a TagEntry.
-// It skips invalid entries and entries whose paths can't be normalized under `rootPath`.
-func parseTagfileEntry(line, tagsPath, rootPath string, kindMap *tagfileKindMap) (TagEntry, bool) {
+// It skips invalid entries and entries whose paths can't be normalized to file URIs.
+func parseTagfileEntry(line, tagsPath string, kindMap *tagfileKindMap) (TagEntry, bool) {
 	fields := strings.Split(line, "\t")
 	if len(fields) < 3 {
 		return TagEntry{}, false
@@ -206,12 +207,12 @@ func parseTagfileEntry(line, tagsPath, rootPath string, kindMap *tagfileKindMap)
 		entry.Kind = kindField
 	}
 
-	relPath, err := tagfilePathToRootRelative(rootPath, tagsPath, entry.Path)
+	uri, err := tagfilePathToFileURI(tagsPath, entry.Path)
 	if err != nil {
-		log.Printf("Failed to make path relative for %s: %v", entry.Path, err)
+		log.Printf("Failed to normalize path for %s: %v", entry.Path, err)
 		return TagEntry{}, false
 	}
-	entry.Path = relPath
+	entry.Path = uri
 
 	return entry, true
 }
@@ -228,17 +229,16 @@ func resolveTagfileKind(kindField string, entry *TagEntry, kindMap *tagfileKindM
 	return kindField
 }
 
-// tagfilePathToRootRelative normalizes a tags-file path to a root-relative path.
+// tagfilePathToFileURI normalizes a tags-file path to an absolute file URI.
 // Relative paths are interpreted relative to the tagfile's directory.
-func tagfilePathToRootRelative(rootPath, tagsPath, raw string) (string, error) {
-	if after, ok := strings.CutPrefix(raw, "file://"); ok {
-		raw = filepath.FromSlash(after)
+func tagfilePathToFileURI(tagsPath, raw string) (string, error) {
+	if raw == "" {
+		return "", fmt.Errorf("empty path")
 	}
-
-	clean := filepath.Clean(raw)
-	if !filepath.IsAbs(clean) {
-		clean = filepath.Clean(filepath.Join(filepath.Dir(tagsPath), clean))
+	baseDir := filepath.Dir(tagsPath)
+	normalized, err := normalizePath(baseDir, raw)
+	if err != nil {
+		return "", err
 	}
-
-	return toRootRelativePath(rootPath, clean)
+	return pathToFileURI(normalized), nil
 }

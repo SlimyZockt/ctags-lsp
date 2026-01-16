@@ -28,15 +28,17 @@ func (server *Server) ctagsArgs(extra ...string) []string {
 // - a fresh ctags scan of the workspace.
 func (server *Server) scanWorkspace() error {
 	if server.tagfilePath != "" {
+		// server.rootURI is validated during initialize.
+		rootDir, _ := fileURIToPath(server.rootURI)
 		tagsPath := server.tagfilePath
 		if !filepath.IsAbs(tagsPath) {
-			tagsPath = filepath.Join(server.rootPath, tagsPath)
+			tagsPath = filepath.Join(rootDir, tagsPath)
 		}
 		tagsPath = filepath.Clean(tagsPath)
 		if _, err := os.Stat(tagsPath); err != nil {
 			return fmt.Errorf("tagfile not found at %q: %v", tagsPath, err)
 		}
-		entries, err := parseTagfile(tagsPath, server.rootPath)
+		entries, err := parseTagfile(tagsPath)
 		if err != nil {
 			return err
 		}
@@ -47,8 +49,10 @@ func (server *Server) scanWorkspace() error {
 		return nil
 	}
 
-	if tagsPath, found := findTagsFile(server.rootPath); found {
-		entries, err := parseTagfile(tagsPath, server.rootPath)
+	// server.rootURI is validated during initialize.
+	rootDir, _ := fileURIToPath(server.rootURI)
+	if tagsPath, found := findTagsFile(rootDir); found {
+		entries, err := parseTagfile(tagsPath)
 		if err != nil {
 			return err
 		}
@@ -59,7 +63,7 @@ func (server *Server) scanWorkspace() error {
 		return nil
 	}
 
-	files, err := listWorkspaceFiles(server.rootPath)
+	files, err := listWorkspaceFiles(rootDir)
 	if err != nil {
 		return err
 	}
@@ -81,7 +85,7 @@ func (server *Server) scanWorkspace() error {
 			defer wg.Done()
 
 			cmd := exec.Command(server.ctagsBin, server.ctagsArgs("-L", "-")...)
-			cmd.Dir = server.rootPath
+			cmd.Dir = rootDir
 			cmd.Stdin = strings.NewReader(strings.Join(chunk, "\n"))
 
 			if err := server.processTagsOutput(cmd); err != nil {
@@ -94,36 +98,35 @@ func (server *Server) scanWorkspace() error {
 	return nil
 }
 
-// listWorkspaceFiles returns root-relative file paths using git, jj, or a directory walk.
-func listWorkspaceFiles(root string) ([]string, error) {
-	if isGitRepo(root) {
-		output, err := exec.Command("git", "-C", root, "ls-files").Output()
+// listWorkspaceFiles returns file paths using git, jj, or a directory walk.
+// These paths are not normalized and may be relative or absolute.
+func listWorkspaceFiles(rootDir string) ([]string, error) {
+	if isGitRepo(rootDir) {
+		output, err := exec.Command("git", "-C", rootDir, "ls-files").Output()
 		if err != nil {
 			return nil, err
 		}
 		files := strings.Split(strings.TrimSpace(string(output)), "\n")
-		return workspacePathsToRootRelative(root, files)
+		return files, nil
 	}
 
-	if isJjRepo(root) {
-		output, err := exec.Command("jj", "file", "list", "--repository", root).Output()
+	if isJjRepo(rootDir) {
+		output, err := exec.Command("jj", "file", "list", "--repository", rootDir).Output()
 		if err != nil {
 			return nil, err
 		}
 		files := strings.Split(strings.TrimSpace(string(output)), "\n")
-		return workspacePathsToRootRelative(root, files)
+		return files, nil
 	}
 
 	var files []string
-	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
-			if rel, e := filepath.Rel(root, path); e == nil {
-				files = append(files, rel)
-			}
+			files = append(files, path)
 		}
 		return nil
 	})
-	return workspacePathsToRootRelative(root, files)
+	return files, nil
 }
 
 func isGitRepo(path string) bool {
@@ -136,37 +139,24 @@ func isJjRepo(path string) bool {
 	return cmd.Run() == nil
 }
 
-// workspacePathsToRootRelative normalizes candidate workspace paths to root-relative form.
-func workspacePathsToRootRelative(rootPath string, paths []string) ([]string, error) {
-	relativePaths := make([]string, 0, len(paths))
-	for _, path := range paths {
-		rel, err := toRootRelativePath(rootPath, path)
-		if err != nil {
-			return nil, err
-		}
-		relativePaths = append(relativePaths, rel)
-	}
-	return relativePaths, nil
-}
-
-// scanSingleFileTag rescans a single file and drops any previous entries for that path.
-func (server *Server) scanSingleFileTag(filePath string) error {
-	if strings.HasPrefix(filePath, "..") {
-		return fmt.Errorf("path outside root: %s", filePath)
-	}
-
+// scanSingleFileTag rescans a single file URI and drops any previous entries for that URI.
+func (server *Server) scanSingleFileTag(fileURI string) error {
 	server.mutex.Lock()
 	newEntries := make([]TagEntry, 0, len(server.tagEntries))
 	for _, entry := range server.tagEntries {
-		if entry.Path != filePath {
+		if entry.Path != fileURI {
 			newEntries = append(newEntries, entry)
 		}
 	}
 	server.tagEntries = newEntries
 	server.mutex.Unlock()
 
+	// fileURI is validated by callers (textDocument URIs).
+	filePath, _ := fileURIToPath(fileURI)
 	cmd := exec.Command(server.ctagsBin, server.ctagsArgs(filePath)...)
-	cmd.Dir = server.rootPath
+	// server.rootURI is validated during initialize.
+	rootDir, _ := fileURIToPath(server.rootURI)
+	cmd.Dir = rootDir
 	return server.processTagsOutput(cmd)
 }
 
@@ -175,6 +165,9 @@ func (server *Server) processTagsOutput(cmd *exec.Cmd) error {
 	if err != nil {
 		return fmt.Errorf("failed to get stdout from ctags command: %v", err)
 	}
+
+	// server.rootURI is validated during initialize.
+	rootDir, _ := fileURIToPath(server.rootURI)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start ctags command: %v", err)
@@ -189,12 +182,12 @@ func (server *Server) processTagsOutput(cmd *exec.Cmd) error {
 			continue
 		}
 
-		relPath, err := toRootRelativePath(server.rootPath, entry.Path)
+		normalized, err := normalizePath(rootDir, entry.Path)
 		if err != nil {
-			log.Printf("Failed to make path relative for %s: %v", entry.Path, err)
+			log.Printf("Failed to normalize path for %s: %v", entry.Path, err)
 			continue
 		}
-		entry.Path = relPath
+		entry.Path = pathToFileURI(normalized)
 
 		entries = append(entries, entry)
 	}
