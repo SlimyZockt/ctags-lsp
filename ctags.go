@@ -28,8 +28,7 @@ func (server *Server) ctagsArgs(extra ...string) []string {
 // - a fresh ctags scan of the workspace.
 func (server *Server) scanWorkspace() error {
 	if server.tagfilePath != "" {
-		// server.rootURI is validated during initialize.
-		rootDir, _ := fileURIToPath(server.rootURI)
+		rootDir := fileURIToPath(server.rootURI)
 		tagsPath := server.tagfilePath
 		if !filepath.IsAbs(tagsPath) {
 			tagsPath = filepath.Join(rootDir, tagsPath)
@@ -49,8 +48,7 @@ func (server *Server) scanWorkspace() error {
 		return nil
 	}
 
-	// server.rootURI is validated during initialize.
-	rootDir, _ := fileURIToPath(server.rootURI)
+	rootDir := fileURIToPath(server.rootURI)
 	if tagsPath, found := findTagsFile(rootDir); found {
 		entries, err := parseTagfile(tagsPath)
 		if err != nil {
@@ -151,11 +149,9 @@ func (server *Server) scanSingleFileTag(fileURI string) error {
 	server.tagEntries = newEntries
 	server.mutex.Unlock()
 
-	// fileURI is validated by callers (textDocument URIs).
-	filePath, _ := fileURIToPath(fileURI)
+	filePath := fileURIToPath(fileURI)
 	cmd := exec.Command(server.ctagsBin, server.ctagsArgs(filePath)...)
-	// server.rootURI is validated during initialize.
-	rootDir, _ := fileURIToPath(server.rootURI)
+	rootDir := fileURIToPath(server.rootURI)
 	cmd.Dir = rootDir
 	return server.processTagsOutput(cmd)
 }
@@ -166,8 +162,7 @@ func (server *Server) processTagsOutput(cmd *exec.Cmd) error {
 		return fmt.Errorf("failed to get stdout from ctags command: %v", err)
 	}
 
-	// server.rootURI is validated during initialize.
-	rootDir, _ := fileURIToPath(server.rootURI)
+	rootDir := fileURIToPath(server.rootURI)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start ctags command: %v", err)

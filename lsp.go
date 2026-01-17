@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -230,11 +232,12 @@ func handleInitialize(server *Server, req RPCRequest) {
 		rootURI := pathToFileURI(cwd)
 		server.rootURI = rootURI
 	} else {
-		if err := validateFileURI(params.RootURI); err != nil {
+		normalizedRootURI, err := normalizeFileURI(params.RootURI)
+		if err != nil {
 			server.sendError(req.ID, -32602, "Invalid params", err.Error())
 			return
 		}
-		server.rootURI = params.RootURI
+		server.rootURI = normalizedRootURI
 	}
 
 	if err := server.scanWorkspace(); err != nil {
@@ -280,14 +283,15 @@ func handleDidOpen(server *Server, req RPCRequest) {
 		return
 	}
 
-	if err := validateFileURI(params.TextDocument.URI); err != nil {
+	normalizedURI, err := normalizeFileURI(params.TextDocument.URI)
+	if err != nil {
 		return
 	}
 
 	content := strings.Split(params.TextDocument.Text, "\n")
 
 	server.cache.mutex.Lock()
-	server.cache.content[params.TextDocument.URI] = content
+	server.cache.content[normalizedURI] = content
 	server.cache.mutex.Unlock()
 }
 
@@ -297,14 +301,15 @@ func handleDidChange(server *Server, req RPCRequest) {
 		return
 	}
 
-	if err := validateFileURI(params.TextDocument.URI); err != nil {
+	normalizedURI, err := normalizeFileURI(params.TextDocument.URI)
+	if err != nil {
 		return
 	}
 
 	if len(params.ContentChanges) > 0 {
 		content := strings.Split(params.ContentChanges[0].Text, "\n")
 		server.cache.mutex.Lock()
-		server.cache.content[params.TextDocument.URI] = content
+		server.cache.content[normalizedURI] = content
 		server.cache.mutex.Unlock()
 	}
 }
@@ -315,12 +320,13 @@ func handleDidClose(server *Server, req RPCRequest) {
 		return
 	}
 
-	if err := validateFileURI(params.TextDocument.URI); err != nil {
+	normalizedURI, err := normalizeFileURI(params.TextDocument.URI)
+	if err != nil {
 		return
 	}
 
 	server.cache.mutex.Lock()
-	delete(server.cache.content, params.TextDocument.URI)
+	delete(server.cache.content, normalizedURI)
 	server.cache.mutex.Unlock()
 }
 
@@ -330,12 +336,13 @@ func handleDidSave(server *Server, req RPCRequest) {
 		return
 	}
 
-	if err := validateFileURI(params.TextDocument.URI); err != nil {
+	normalizedURI, err := normalizeFileURI(params.TextDocument.URI)
+	if err != nil {
 		return
 	}
 
-	if err := server.scanSingleFileTag(params.TextDocument.URI); err != nil {
-		log.Printf("Error rescanning file %s: %v", params.TextDocument.URI, err)
+	if err := server.scanSingleFileTag(normalizedURI); err != nil {
+		log.Printf("Error rescanning file %s: %v", normalizedURI, err)
 	}
 }
 
@@ -346,15 +353,16 @@ func handleCompletion(server *Server, req RPCRequest) {
 		return
 	}
 
-	filePath, err := fileURIToPath(params.TextDocument.URI)
+	normalizedURI, err := normalizeFileURI(params.TextDocument.URI)
 	if err != nil {
 		server.sendError(req.ID, -32602, "Invalid params", err.Error())
 		return
 	}
+	filePath := fileURIToPath(normalizedURI)
 	currentFileExt := filepath.Ext(filePath)
 
 	server.cache.mutex.RLock()
-	lines, ok := server.cache.content[params.TextDocument.URI]
+	lines, ok := server.cache.content[normalizedURI]
 	server.cache.mutex.RUnlock()
 
 	if !ok || params.Position.Line >= len(lines) {
@@ -370,7 +378,7 @@ func handleCompletion(server *Server, req RPCRequest) {
 		isAfterDot = prevChar == '.'
 	}
 
-	word, err := server.getCurrentWord(params.TextDocument.URI, params.Position)
+	word, err := server.getCurrentWord(normalizedURI, params.Position)
 	if err != nil {
 		if isAfterDot {
 			word = ""
@@ -394,11 +402,7 @@ func handleCompletion(server *Server, req RPCRequest) {
 
 			kind := GetLSPCompletionKind(entry.Kind)
 
-			entryFilePath, err := fileURIToPath(entry.Path)
-			if err != nil {
-				log.Printf("Failed to parse entry URI %s: %v", entry.Path, err)
-				continue
-			}
+			entryFilePath := fileURIToPath(entry.Path)
 			entryFileExt := filepath.Ext(entryFilePath)
 
 			includeEntry := false
@@ -445,12 +449,13 @@ func handleDefinition(server *Server, req RPCRequest) {
 		return
 	}
 
-	if err := validateFileURI(params.TextDocument.URI); err != nil {
+	normalizedURI, err := normalizeFileURI(params.TextDocument.URI)
+	if err != nil {
 		server.sendError(req.ID, -32602, "Invalid params", err.Error())
 		return
 	}
 
-	symbol, err := server.getCurrentWord(params.TextDocument.URI, params.Position)
+	symbol, err := server.getCurrentWord(normalizedURI, params.Position)
 	if err != nil {
 		server.sendResult(req.ID, nil)
 		return
@@ -535,11 +540,12 @@ func handleWorkspaceSymbol(server *Server, req RPCRequest) {
 func handleDocumentSymbol(server *Server, req RPCRequest) {
 	var params DocumentSymbolParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		server.sendError(req.ID, -32602, "Invalid params", nil)
+		server.sendError(req.ID, -32602, "Invalid params", err.Error())
 		return
 	}
 
-	if err := validateFileURI(params.TextDocument.URI); err != nil {
+	normalizedURI, err := normalizeFileURI(params.TextDocument.URI)
+	if err != nil {
 		server.sendError(req.ID, -32602, "Invalid params", err.Error())
 		return
 	}
@@ -550,7 +556,7 @@ func handleDocumentSymbol(server *Server, req RPCRequest) {
 	var symbols []SymbolInformation
 
 	for _, entry := range server.tagEntries {
-		if entry.Path != params.TextDocument.URI {
+		if entry.Path != normalizedURI {
 			continue
 		}
 
@@ -580,29 +586,46 @@ func handleDocumentSymbol(server *Server, req RPCRequest) {
 	server.sendResult(req.ID, symbols)
 }
 
-func validateFileURI(uri string) error {
-	_, err := fileURIToPath(uri)
-	return err
-}
-
-func fileURIToPath(uri string) (string, error) {
-	after, ok := strings.CutPrefix(uri, "file://")
-	if !ok {
+// normalizeFileURI expects external URIs.
+func normalizeFileURI(uri string) (string, error) {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		// Surface parsing failures so we never normalize malformed URIs.
+		return "", fmt.Errorf("failed to parse URI %q: %w", uri, err)
+	}
+	if parsed.Scheme != "file" {
+		// The server only supports file:// URIs for filesystem-backed documents.
 		return "", fmt.Errorf("expected file:// URI: %q", uri)
 	}
-	if after == "" {
+	if parsed.Path == "" {
+		// Empty paths cannot be resolved to a filesystem location.
 		return "", fmt.Errorf("empty file URI")
 	}
-	path := filepath.Clean(filepath.FromSlash(after))
-	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("file URI is not absolute: %q", uri)
+
+	path := filepath.Clean(filepath.FromSlash(parsed.Path))
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		// Avoid emitting a bogus URI if the filesystem path cannot be resolved.
+		return "", fmt.Errorf("failed to resolve path %q: %w", path, err)
 	}
-	return path, nil
+
+	return pathToFileURI(absPath), nil
+}
+
+// fileURIToPath expects normalized URIs.
+func fileURIToPath(uri string) string {
+	parsed, _ := url.Parse(uri)
+	return filepath.Clean(filepath.FromSlash(parsed.Path))
 }
 
 // pathToFileURI expects an absolute, cleaned filesystem path.
 func pathToFileURI(path string) string {
-	return "file://" + filepath.ToSlash(path)
+	slashPath := filepath.ToSlash(path)
+	if runtime.GOOS == "windows" {
+		slashPath = "/" + slashPath // Turns invalid "file://C:/" into valid "file:///C:/"
+	}
+	return (&url.URL{Scheme: "file", Path: slashPath}).String()
 }
 
 // normalizePath expects raw filesystem paths from ctags/tagfiles, not file:// URIs.
@@ -618,9 +641,8 @@ func normalizePath(baseDir, raw string) (string, error) {
 	return clean, nil
 }
 
-// readFileLines assumes fileURI is already validated by callers.
 func readFileLines(fileURI string) ([]string, error) {
-	filePath, _ := fileURIToPath(fileURI)
+	filePath := fileURIToPath(fileURI)
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
