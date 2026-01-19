@@ -20,6 +20,7 @@ type Config struct {
 	ctagsBin    string
 	tagfilePath string
 	languages   string
+	ctagArgs    string
 }
 
 var version = "self compiled" // Populated with -X main.version
@@ -56,6 +57,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, checkCtags fu
 		tagfilePath: config.tagfilePath,
 		languages:   config.languages,
 		output:      stdout,
+		ctagArgs:    strings.Split(config.ctagArgs, " "),
 	}
 
 	if config.benchmark {
@@ -103,6 +105,7 @@ func parseFlags(args []string, output io.Writer) (*Config, error) {
 	flagset.StringVar(&config.ctagsBin, "ctags-bin", "ctags", "")
 	flagset.StringVar(&config.tagfilePath, "tagfile", "", "")
 	flagset.StringVar(&config.languages, "languages", "", "")
+	flagset.StringVar(&config.ctagArgs, "ctags-args", "", "")
 
 	if err := flagset.Parse(args[1:]); err != nil {
 		return nil, err
@@ -124,6 +127,7 @@ Options:
   --ctags-bin <name>   Use custom ctags binary name (default: "ctags")
   --tagfile <path>     Use custom tagfile (default: tries "tags", ".tags" and ".git/tags")
   --languages <value>  Pass through language filter list to ctags
+  --ctags-args <value> Pass through ctags arg
 `, program)
 }
 

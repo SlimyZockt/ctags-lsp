@@ -162,6 +162,7 @@ type Server struct {
 	ctagsBin    string
 	tagfilePath string
 	languages   string
+	ctagArgs    []string
 	output      io.Writer
 	mutex       sync.Mutex
 }

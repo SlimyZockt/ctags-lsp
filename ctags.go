@@ -14,7 +14,7 @@ import (
 	"sync"
 )
 
-func (server *Server) ctagsArgs(extra ...string) []string {
+func (server *Server) parseCtagsArgs(extra ...string) []string {
 	args := []string{"--output-format=json", "--fields=+n"}
 	if server.languages != "" {
 		args = append(args, "--languages="+server.languages)
@@ -82,7 +82,7 @@ func (server *Server) scanWorkspace() error {
 		go func(chunk []string) {
 			defer wg.Done()
 
-			cmd := exec.Command(server.ctagsBin, server.ctagsArgs("-L", "-")...)
+			cmd := exec.Command(server.ctagsBin, server.parseCtagsArgs("-L", "-")...)
 			cmd.Dir = rootDir
 			cmd.Stdin = strings.NewReader(strings.Join(chunk, "\n"))
 
@@ -150,7 +150,8 @@ func (server *Server) scanSingleFileTag(fileURI string) error {
 	server.mutex.Unlock()
 
 	filePath := fileURIToPath(fileURI)
-	cmd := exec.Command(server.ctagsBin, server.ctagsArgs(filePath)...)
+	tmp := []string{filePath}
+	cmd := exec.Command(server.ctagsBin, server.parseCtagsArgs(append(tmp, server.ctagArgs...)...)...)
 	rootDir := fileURIToPath(server.rootURI)
 	cmd.Dir = rootDir
 	return server.processTagsOutput(cmd)
